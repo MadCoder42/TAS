@@ -330,6 +330,13 @@
     if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
     return `${Math.floor(s / 86400)} d ago`;
   };
+  /** Where to send the user for a saved job: a clean watch URL for YouTube, else the page it was captured on.
+   *  Only http(s) is ever linked, so a stored value can never become a javascript: or data: link. */
+  const jobUrl = (j) => {
+    const yt = /^yt:([\w-]{6,})$/.exec(j.videoKey || '');
+    if (yt) return 'https://www.youtube.com/watch?v=' + yt[1];
+    try { const u = new URL(j.pageUrl); return u.protocol === 'https:' || u.protocol === 'http:' ? u.href : ''; } catch (e) { return ''; }
+  };
   const kb = (n) => (n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');
   async function loadCache() {
     const r = await GST.rpc({ type: 'bg:jobs:list' });
@@ -349,7 +356,14 @@
         <div><div class="bar"><i style="width:${pct}%"></i></div><small>${pct}% of ${j.total.toLocaleString()} lines</small></div>
         <span class="chip ${j.status === 'done' ? 'ok' : j.status === 'partial' ? 'bad' : ''}">${label[j.status] || j.status}</span>
         <button class="btn icon sm danger" title="Delete" aria-label="Delete this translation">${GST.icon('trash')}</button>`;
-      li.querySelector('.t').textContent = j.title || j.videoKey;
+      const tEl = li.querySelector('.t');
+      const url = jobUrl(j);
+      if (url) {
+        const a = document.createElement('a');
+        a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+        a.textContent = j.title || j.videoKey; a.title = 'Open this video: ' + url;
+        tEl.appendChild(a);
+      } else tEl.textContent = j.title || j.videoKey;
       li.querySelector('small').textContent = `${j.target.name}, ${kb(j.size)}, ${rel(j.updatedAt)}`;
       li.querySelector('button').onclick = async () => { await GST.rpc({ type: 'bg:job:cancel', key: j.key }); loadCache(); };
       ul.appendChild(li);
