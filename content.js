@@ -17,6 +17,9 @@
   let settings = GST.mergeSettings(null);
   let overlayVisible = false;
   let lastPlaying = null;
+  // Position set by dragging the subtitle on this page: { x, y } in % of the video, or null.
+  // Memory only: never written to settings, so it applies to this page view and nothing else.
+  let posOverride = null;
 
   /* ============================================================ identity */
   function ytId() {
@@ -159,7 +162,7 @@
     if (vk === lastVK) return;
     lastVK = vk;
     sources.clear(); activeSourceId = null; fetchedTracks.clear();
-    job = null; jobKey = null; overlayVisible = false; lastKey = null;
+    job = null; jobKey = null; overlayVisible = false; lastKey = null; posOverride = null;
     if (port && subKey) { try { port.postMessage({ type: 'sub', key: null }); } catch (e) { /* ignore */ } }
     subKey = null;
     render();
@@ -242,12 +245,76 @@
     const sh = host.attachShadow({ mode: 'closed' });
     sh.innerHTML = `<style>
       .box{position:absolute;display:flex;flex-direction:column;align-items:center;max-width:92%;pointer-events:none;transition:translate .18s ease}
-      .ln{width:fit-content;max-width:100%;margin:2px 0;padding:.12em .55em .2em;border-radius:.3em;text-align:center;white-space:pre-wrap;overflow-wrap:anywhere;
+      .box.drag{transition:none}
+      .ln{pointer-events:auto;cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;width:fit-content;max-width:100%;margin:2px 0;padding:.12em .55em .2em;border-radius:.3em;text-align:center;white-space:pre-wrap;overflow-wrap:anywhere;
         line-height:1.5;unicode-bidi:isolate;color:var(--fg);background:var(--bg);font-size:var(--fs);font-weight:var(--fw);text-shadow:var(--ts);
         font-family:"Vazirmatn","Segoe UI",Tahoma,system-ui,-apple-system,"Noto Sans Arabic","Noto Sans Hebrew",sans-serif}
+      .ln:hover,.box.drag .ln{outline:1.5px dashed rgba(255,255,255,.7);outline-offset:2px}
+      .box.drag .ln{cursor:grabbing}
     </style><div class="box"></div>`;
     overlay = { host, box: sh.querySelector('.box') };
+    bindDrag(host, overlay.box);
     return overlay;
+  }
+
+  /* ---- drag the subtitle on the page.
+   * Same anchor model as the settings (left/top = x/y %, translate -x/-y %), so the maths is the one the
+   * preview in the settings page uses. Result goes to posOverride only. Double-tapping the subtitle clears it. */
+  let dragging = false, swallowClick = false;
+  const clampPct = (n) => Math.min(100, Math.max(0, n));
+  const solvePct = (c, size, boxSize) => (size - boxSize > 1 ? clampPct((c - boxSize / 2) / ((size - boxSize) / 100)) : 50);
+  function bindDrag(host, box) {
+    let drag = null, lastTap = null;
+    const stop = (e) => { e.preventDefault(); e.stopPropagation(); };
+    const finish = (e) => {
+      if (!drag || (e && e.pointerId !== drag.id)) return;
+      const moved = drag.moved;
+      try { box.releasePointerCapture(drag.id); } catch (err) { /* ignore */ }
+      window.removeEventListener('pointermove', onMove, true);
+      window.removeEventListener('pointerup', finish, true);
+      window.removeEventListener('pointercancel', finish, true);
+      drag = null; dragging = false; box.classList.remove('drag');
+      if (moved) { if (e) stop(e); swallowClick = true; setTimeout(() => { swallowClick = false; }, 80); lastTap = null; }
+      else if (e && e.type === 'pointerup') {
+        // Double-tap resets to the saved position. Detected here because cancelling pointerdown (needed to keep
+        // the player from seeing the press) also stops the browser from generating click / dblclick.
+        const now = performance.now();
+        if (lastTap && now - lastTap.t < 400 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 12) { lastTap = null; posOverride = null; }
+        else lastTap = { t: now, x: e.clientX, y: e.clientY };
+      }
+      lastKey = null; paint(); // lets the control-bar lift apply again
+    };
+    function onMove(e) {
+      if (!drag || e.pointerId !== drag.id) return;
+      if (!drag.moved) {
+        if (Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 4) return; // still a click
+        drag.moved = true; dragging = true;
+        box.classList.add('drag'); box.style.translate = ''; // no control-bar lift while dragging
+      }
+      stop(e);
+      const hr = host.getBoundingClientRect();
+      posOverride = {
+        x: +solvePct(e.clientX - drag.dx - hr.left, hr.width, drag.w).toFixed(2),
+        y: +solvePct(e.clientY - drag.dy - hr.top, hr.height, drag.h).toFixed(2),
+      };
+      applyPos();
+    }
+    box.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || drag || !e.target.closest || !e.target.closest('.ln')) return;
+      const br = box.getBoundingClientRect(); // where the box visibly is right now (includes any lift)
+      drag = { id: e.pointerId, x0: e.clientX, y0: e.clientY, moved: false, w: br.width, h: br.height,
+        dx: e.clientX - (br.left + br.width / 2), dy: e.clientY - (br.top + br.height / 2) };
+      try { box.setPointerCapture(e.pointerId); } catch (err) { /* window listeners still cover us */ }
+      window.addEventListener('pointermove', onMove, true);
+      window.addEventListener('pointerup', finish, true);
+      window.addEventListener('pointercancel', finish, true);
+      stop(e); // keep the player from seeing the press (e.g. YouTube's press-and-hold speed-up)
+    });
+    // Browsers that still fire click / dblclick after a cancelled pointerdown must not pass them to the player
+    // (a click would pause the video, a double-click would toggle fullscreen).
+    for (const t of ['click', 'dblclick']) box.addEventListener(t, (e) => { if (e.target.closest && e.target.closest('.ln')) stop(e); });
+    // a drag must never end as a click on the player (that would pause the video)
+    window.addEventListener('click', (e) => { if (swallowClick) stop(e); }, true);
   }
 
   function updateHideOriginal(on) {
@@ -270,6 +337,17 @@
     return (i >= 0 && job.cues[i][1] > t && job.tr[i]) ? [job.tr[i]] : [];
   }
 
+  // Effective anchor: this page's drag override if there is one, otherwise the saved default.
+  const curPos = () => posOverride || { x: settings.display.x, y: settings.display.y };
+  let posSig = '';
+  function applyPos() {
+    if (!overlay) return;
+    const p = curPos(), { box } = overlay;
+    posSig = p.x + ',' + p.y;
+    box.style.left = p.x + '%'; box.style.top = p.y + '%';
+    box.style.transform = `translate(-${p.x}%,-${p.y}%)`;
+  }
+
   function paint() {
     const v = pickVideo();
     if (!v || !job) { if (overlay) overlay.host.style.display = 'none'; return; }
@@ -287,7 +365,7 @@
     host.style.width = r.width + 'px'; host.style.height = r.height + 'px';
 
     const fsPx = Math.max(10, d.fontSize * r.height / 100);
-    const sig = [d.color, d.bg, d.bgOpacity, d.x, d.y, d.dir, d.bold, d.outline, fsPx.toFixed(1)].join('|');
+    const sig = [d.color, d.bg, d.bgOpacity, d.dir, d.bold, d.outline, fsPx.toFixed(1)].join('|');
     if (sig !== styleSig) {
       styleSig = sig; lastKey = null;
       box.style.setProperty('--fg', d.color);
@@ -295,12 +373,12 @@
       box.style.setProperty('--fs', fsPx.toFixed(1) + 'px');
       box.style.setProperty('--fw', d.bold ? '700' : '500');
       box.style.setProperty('--ts', d.outline ? '0 0 3px #000,0 0 3px #000,1px 1px 2px #000' : 'none');
-      box.style.left = d.x + '%'; box.style.top = d.y + '%';
-      box.style.transform = `translate(-${d.x}%,-${d.y}%)`;
     }
+    const p = curPos();
+    if (p.x + ',' + p.y !== posSig) applyPos();
     const lines = currentLines(v.currentTime * 1000);
     const key = lines.join('\n');
-    if (key !== lastKey) {
+    if (key !== lastKey && !dragging) { // content stays put while the user holds it
       lastKey = key;
       box.replaceChildren(...lines.map((l) => {
         const el = document.createElement('div');
@@ -312,16 +390,16 @@
     }
     // YouTube: keep subtitles above the control bar while it is visible
     let over = 0;
-    if (isYT && lines.length) {
+    if (isYT && lines.length && !dragging) {
       const pl = document.querySelector('#movie_player');
       if (pl && !pl.classList.contains('ytp-autohide')) {
         const bar = pl.querySelector('.ytp-chrome-bottom');
         const lift = (bar ? bar.offsetHeight : 0) + 6;
-        const baseBottom = r.height * d.y / 100 + (1 - d.y / 100) * box.offsetHeight;
+        const baseBottom = r.height * p.y / 100 + (1 - p.y / 100) * box.offsetHeight;
         over = Math.max(0, baseBottom - (r.height - lift));
       }
     }
-    box.style.translate = over ? `0 ${-over}px` : '';
+    if (!dragging) box.style.translate = over ? `0 ${-over}px` : '';
   }
 
   function tick(ts) {
@@ -340,10 +418,14 @@
   document.addEventListener('webkitfullscreenchange', () => paint());
 
   /* ============================================================ settings */
-  let lastTarget = null;
+  let lastTarget = null, lastXY = null;
   function onSettings() {
     const code = GST.targetInfo(settings).code;
-    styleSig = ''; lastKey = null;
+    styleSig = ''; posSig = ''; lastKey = null;
+    // moving the default in the settings page wins over an earlier drag on this page
+    const xy = settings.display.x + ',' + settings.display.y;
+    if (lastXY !== null && xy !== lastXY) posOverride = null;
+    lastXY = xy;
     if (lastTarget !== null && code !== lastTarget) refreshLink(true); // new target language = other cached job
     lastTarget = code;
     render();

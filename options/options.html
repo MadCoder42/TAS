@@ -105,13 +105,17 @@
 
     <!-- ============================================================ DISPLAY -->
     <section id="tab-display" hidden>
-      <header class="phead"><h1>Subtitle display</h1><p>Drag the subtitle in the preview to place it.</p></header>
+      <header class="phead"><h1>Subtitle display</h1><p>Drag the subtitle in the preview to set its default position for every page. On a video you can drag it again to move it for that page only; double-click it there to snap back.</p></header>
 
+      <div class="dsp">
+      <aside class="dsp-stage">
       <div class="stage" id="stage">
         <div class="scene" aria-hidden="true"><i class="sun"></i><i class="hill a"></i><i class="hill b"></i></div>
         <div class="pvbox" id="pvbox" tabindex="0" role="slider" aria-label="Subtitle position. Use arrow keys to move." aria-valuetext=""></div>
       </div>
+      </aside>
 
+      <div class="dsp-main">
       <div class="grp tight">
         <div class="row">
           <div class="lab"><label>Text direction</label><small id="dirNote">Forced direction: a sentence that starts with an English word still reads right to left in RTL mode.</small></div>
@@ -132,11 +136,11 @@
           <div class="ctl pair"><input type="range" id="bgOpacity" min="0" max="100"><output id="bgOpacityO" class="num"></output></div>
         </div>
         <div class="row">
-          <div class="lab"><label for="px">Horizontal position</label><small>0 is the left edge, 100 the right edge.</small></div>
+          <div class="lab"><label for="px">Horizontal position</label><small>0 is the left edge, 100 the right edge. Default for every page.</small></div>
           <div class="ctl pair"><input type="range" id="px" min="0" max="100"><output id="pxO" class="num"></output></div>
         </div>
         <div class="row">
-          <div class="lab"><label for="py">Vertical position</label><small>0 is the top edge, 100 the bottom edge.</small></div>
+          <div class="lab"><label for="py">Vertical position</label><small>0 is the top edge, 100 the bottom edge. Default for every page.</small></div>
           <div class="ctl pair"><input type="range" id="py" min="0" max="100"><output id="pyO" class="num"></output></div>
         </div>
         <div class="row">
@@ -159,6 +163,8 @@
           <div class="lab"><label for="autoShowCached">Show saved translations automatically</label><small>Off by default: you press “Show subtitles” in the popup when you want them.</small></div>
           <div class="ctl end"><label class="switch"><input type="checkbox" id="autoShowCached"><span></span></label></div>
         </div>
+      </div>
+      </div>
       </div>
     </section>
 

@@ -80,8 +80,27 @@ a { color: var(--accent); }
 .tone:active { transform: translateY(1px); }
 .tone[aria-pressed=true] { background: var(--accent); color: var(--on-accent); }
 
-/* ---------- display preview */
-.stage { position: sticky; top: 14px; z-index: 6; width: 100%; max-width: 720px; aspect-ratio: 16 / 9; border-radius: 14px; overflow: hidden; margin-bottom: 30px; user-select: none; touch-action: none; box-shadow: 0 0 0 1.5px var(--hair), 0 14px 30px -12px rgba(10,14,50,.45); background: linear-gradient(180deg, #f2b66d 0%, #e0705b 38%, #4a3b8f 100%); }
+/* ---------- display preview
+ * The preview sits in its own column beside the settings and stays pinned while the page scrolls, so it can
+ * never cover a setting. The switch is based on the width of the content area (container query), not the
+ * window, so it also holds in half-screen windows. Only on very narrow content (phones) does the preview
+ * fall back to a pinned band above the settings. */
+#tab-display { container: dsp / inline-size; }
+.dsp { display: grid; gap: 0; }
+.dsp-stage { position: sticky; top: 0; z-index: 6; padding: 12px 0 16px; background: var(--bg); }
+.stage { position: relative; width: min(100%, 380px); aspect-ratio: 16 / 9; border-radius: 14px; overflow: hidden; user-select: none; touch-action: none; box-shadow: 0 0 0 1.5px var(--hair), 0 14px 30px -12px rgba(10,14,50,.45); background: linear-gradient(180deg, #f2b66d 0%, #e0705b 38%, #4a3b8f 100%); }
+@container dsp (min-width: 560px) {
+  .dsp { grid-template-columns: minmax(0, 1fr) clamp(240px, 44%, 480px); column-gap: 28px; align-items: start; }
+  .dsp-stage { grid-column: 2; grid-row: 1; top: 24px; padding: 0; background: none; }
+  .dsp-main { grid-column: 1; grid-row: 1; min-width: 0; }
+  .stage { width: 100%; }
+  .dsp-main .row { grid-template-columns: 1fr; gap: 8px; }          /* narrow settings column: label above control */
+  .dsp-main .ctl.end { justify-content: flex-start; }
+}
+@container dsp (min-width: 780px) {
+  .dsp-main .row { grid-template-columns: minmax(120px, 1fr) minmax(170px, 1.1fr); gap: 18px; }
+  .dsp-main .ctl.end { justify-content: flex-end; }
+}
 .scene i { position: absolute; display: block; }
 .sun { width: 18%; aspect-ratio: 1; border-radius: 50%; background: #ffe9a8; left: 62%; top: 24%; box-shadow: 0 0 60px 10px rgba(255, 233, 168, .6); }
 .hill { bottom: -2%; width: 90%; height: 40%; border-radius: 50% 50% 0 0; }
@@ -99,6 +118,8 @@ a { color: var(--accent); }
 .bar { height: 8px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
 .bar i { display: block; height: 100%; background: var(--hi); border-radius: inherit; }
 .nojobs { padding: 30px 0; color: var(--muted); }
+
+@media (min-width: 901px) and (max-width: 1100px) { main { padding-inline: 24px; } }
 
 @media (max-width: 900px) {
   .shell { grid-template-columns: 1fr; }

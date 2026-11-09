@@ -24,7 +24,11 @@ https://aistudio.google.com/apikey and press *Fetch models*.
 3. **Pause / Resume / Cancel** are in the popup. Cancel also deletes the saved data for that video.
 4. The **Blocks** tab (or the expand button for a full-tab view) lets you edit any line, translate or
    retranslate one block, and download an `.srt` (translated, bilingual or original).
-5. Visit the same video later: the popup says *Translated*; flip *Show subtitles* to load it from storage.
+5. **Move the subtitle on the page:** press and drag the subtitle text on the video to place it where you want.
+   This only affects the page you are on: it is kept in memory, not saved to settings, and it is dropped when you
+   open another video, reload the page, change the saved position in settings, or double-click the subtitle.
+   The position in *Settings > Subtitle display* is the saved default for every page.
+6. Visit the same video later: the popup says *Translated*; flip *Show subtitles* to load it from storage.
    An unfinished job continues from the first unfinished block.
 
 ## How it works
@@ -33,7 +37,7 @@ https://aistudio.google.com/apikey and press *Fetch models*.
 |---|---|
 | `inject.js` | MAIN-world hook of `fetch` / `XMLHttpRequest`. Sees the signed timedtext response the player already received and forwards it. |
 | `lib/captions.js` | **Timedtext to SRT.** Parses YouTube `pb3`/`json3` (incl. ASR rolling captions with `aAppend` newline events and overlapping durations), srv1/srv3 XML, TTML, VTT, SRT, generic JSON; builds SRT. |
-| `content.js` | Ingests captures, mirrors the cached/live job, draws the overlay in a Shadow DOM (fullscreen aware), answers the popup. |
+| `content.js` | Ingests captures, mirrors the cached/live job, draws the overlay in a Shadow DOM (fullscreen aware, subtitle draggable per page), answers the popup. |
 | `background.js` | Translation engine: prompt, chunking, key fallback on 429, retries, cool-down, per-block persistence, pause/resume/cancel, encrypted key store. |
 | `lib/vault.js` | AES-GCM encryption with the non-extractable device key (loaded by the background only). |
 | `popup/` | Overview, subtitle-density strip, block manager, download. |
