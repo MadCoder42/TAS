@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TAS</title>
+  <link rel="stylesheet" href="../ui/base.css">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body class="pop">
+  <div class="app" id="app" data-kind="loading">
+    <header class="card">
+      <div class="bar">
+        <span class="brand"><svg viewBox="0 0 24 24" class="logo" aria-hidden="true"><rect x="3" y="5" width="18" height="5" rx="1.6" fill="#fff"/><rect x="6" y="13" width="12" height="5" rx="1.6" fill="#ffd426"/></svg>TAS</span>
+        <span class="spacer"></span>
+        <button class="tbtn" id="btnExpand" title="Open in a tab" aria-label="Open in a tab" data-icon="expand"></button>
+        <button class="tbtn" id="btnSettings" title="Settings" aria-label="Settings" data-icon="sliders"></button>
+      </div>
+      <h1 id="headline">Looking for a video</h1>
+      <p id="subline"></p>
+      <div class="strip" id="strip" title="Click to jump in the video">
+        <div class="cols" id="cols"></div>
+        <div class="playhead" id="playhead" hidden></div>
+      </div>
+      <div class="stripmeta num"><span id="pct"></span><span id="lines"></span></div>
+    </header>
+
+    <nav class="tabs" id="tabs" role="tablist">
+      <button role="tab" data-tab="home" class="on" aria-selected="true">Translate</button>
+      <button role="tab" data-tab="blocks" aria-selected="false">Blocks <span class="count num" id="blkCount"></span></button>
+    </nav>
+
+    <main>
+      <section id="home" role="tabpanel">
+        <div class="notice" id="notice" hidden></div>
+        <div class="actions" id="actions"></div>
+
+        <div class="line toggle">
+          <div>
+            <b>Show subtitles on the video</b>
+            <small class="muted" id="showHint"></small>
+          </div>
+          <label class="switch"><input type="checkbox" id="showToggle" aria-label="Show subtitles on the video"><span></span></label>
+        </div>
+
+        <div class="plate-wrap" id="plateWrap" hidden>
+          <small class="muted">Latest translated line</small>
+          <div class="plate" id="plate"></div>
+        </div>
+
+        <div class="line source" id="sourceRow" hidden>
+          <label for="source"><b>Subtitle track</b></label>
+          <select id="source"></select>
+        </div>
+
+        <p class="foot muted" id="keyline"></p>
+      </section>
+
+      <section id="blocks" role="tabpanel" hidden>
+        <div class="toolbar">
+          <div class="seg" id="filter" role="group" aria-label="Filter blocks">
+            <label><input type="radio" name="f" value="all" checked><span>All</span></label>
+            <label><input type="radio" name="f" value="d"><span>Done</span></label>
+            <label><input type="radio" name="f" value="p"><span>Waiting</span></label>
+            <label><input type="radio" name="f" value="e"><span>Failed</span></label>
+          </div>
+          <div class="dl">
+            <select id="dlMode" aria-label="Subtitle file contents">
+              <option value="translated">Translated</option>
+              <option value="bilingual">Bilingual</option>
+              <option value="original">Original</option>
+            </select>
+            <button class="btn hi sm" id="btnDownload" data-icon="download"> Download .srt</button>
+          </div>
+          <label class="rlm" id="rlmWrap" hidden title="Adds an invisible right-to-left mark to every line so players keep punctuation on the correct side">
+            <input type="checkbox" id="rlm" checked> RTL marks in the file
+          </label>
+        </div>
+        <div id="blockList" class="blist"></div>
+        <div class="empty" id="blocksEmpty" hidden></div>
+      </section>
+    </main>
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  </div>
+  <script src="../lib/shared.js"></script>
+  <script src="../lib/captions.js"></script>
+  <script src="../lib/icons.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

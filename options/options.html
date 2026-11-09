@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TAS settings</title>
+  <link rel="stylesheet" href="../ui/base.css">
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="rail">
+    <div class="brand"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="5" rx="1.6" fill="#fff"/><rect x="6" y="13" width="12" height="5" rx="1.6" fill="#ffd426"/></svg>TAS</div>
+    <nav id="nav" aria-label="Settings sections">
+      <button data-tab="translation" class="on">Translation</button>
+      <button data-tab="display">Subtitle display</button>
+      <button data-tab="cache">Cache</button>
+    </nav>
+    <div class="saved" id="saved" role="status" aria-live="polite"><span class="sdot"></span><span id="savedText">All changes saved</span></div>
+  </aside>
+
+  <main>
+    <!-- ============================================================ TRANSLATION -->
+    <section id="tab-translation">
+      <header class="phead"><h1>Translation</h1><p>Everything saves the moment you change it.</p></header>
+
+      <div class="grp">
+        <h2>API keys</h2>
+        <p class="gdesc">Keys are tried from top to bottom. When one hits its usage limit (error 429), the next one takes over until the first recovers. Keys stay in this browser and are only sent to Google's Gemini API.</p>
+        <ol class="keys" id="keys"></ol>
+        <div class="addkeys">
+          <textarea id="newKeys" rows="2" placeholder="Paste one or more API keys, separated by spaces or new lines" aria-label="New API keys" spellcheck="false" autocomplete="off"></textarea>
+          <button class="btn primary" id="addKeys" data-icon="plus"> Add keys</button>
+        </div>
+        <p class="hint">Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">aistudio.google.com/apikey</a>.</p>
+      </div>
+
+      <div class="grp">
+        <h2>Model</h2>
+        <div class="row">
+          <div class="lab"><label for="modelBtn">Gemini model</label><small id="modelStatus">Models are fetched from the endpoint with your key.</small></div>
+          <div class="ctl">
+            <div class="combo">
+              <button class="modelbtn" id="modelBtn" aria-haspopup="listbox" aria-expanded="false"><span><b id="modelName"></b><small id="modelId"></small></span><svg class="i" aria-hidden="true"><use href="#i-chevron"/></svg></button>
+              <div class="panel" id="modelPanel" hidden>
+                <input type="search" id="modelSearch" placeholder="Search or type a model id" aria-label="Search models" autocomplete="off">
+                <ul id="modelList" role="listbox"></ul>
+              </div>
+            </div>
+            <button class="btn ghost sm" id="fetchModels" data-icon="redo"> Fetch models</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="grp">
+        <h2>Language and tone</h2>
+        <div class="row">
+          <div class="lab"><label for="targetLang">Target language</label><small>Right-to-left languages such as Persian, Arabic and Hebrew switch the subtitle direction to RTL automatically.</small></div>
+          <div class="ctl col">
+            <select id="targetLang"></select>
+            <input type="text" id="customLang" placeholder="Language name, e.g. Esperanto" hidden aria-label="Custom language name">
+          </div>
+        </div>
+        <div class="row">
+          <div class="lab"><label>Tone</label><small>How the translation should sound.</small></div>
+          <div class="ctl col">
+            <div class="tones" id="tones" role="group" aria-label="Tone"></div>
+            <textarea id="customTone" rows="2" placeholder="Describe the tone you want, e.g. warm and slightly sarcastic, like a podcast host" hidden aria-label="Custom tone"></textarea>
+          </div>
+        </div>
+        <div class="row">
+          <div class="lab"><label for="extra">Additional instructions</label><small>Sent with every request. Glossaries, names to keep, style notes.</small></div>
+          <div class="ctl"><textarea id="extra" rows="3" placeholder="e.g. Keep “Rust” and “Cargo” in English. Address the viewer informally."></textarea></div>
+        </div>
+      </div>
+
+      <div class="grp">
+        <h2>Pacing</h2>
+        <div class="row">
+          <div class="lab"><label for="blockSize">Lines per block</label><small>How many subtitle lines go into one request. Larger blocks give the model more context but fail more expensively. Applies to new translations.</small></div>
+          <div class="ctl pair"><input type="range" id="blockSizeR" min="1" max="100"><input type="number" id="blockSize" min="1" max="300"></div>
+        </div>
+        <div class="row">
+          <div class="lab"><label for="cooldown">Cool-down between requests</label><small>Seconds to wait after each request. Raise it if you keep hitting rate limits.</small></div>
+          <div class="ctl pair"><input type="range" id="cooldownR" min="0" max="30" step="0.1"><input type="number" id="cooldown" min="0" max="120" step="0.1"></div>
+        </div>
+        <div class="row">
+          <div class="lab"><label for="retries">Retries on error</label><small>Extra attempts for a block when the request fails or the model skips lines.</small></div>
+          <div class="ctl pair"><input type="range" id="retriesR" min="0" max="10"><input type="number" id="retries" min="0" max="20"></div>
+        </div>
+      </div>
+
+      <div class="grp">
+        <h2>Behaviour</h2>
+        <div class="row">
+          <div class="lab"><label for="explicit">Explicit translation</label><small>Tells the model to translate profanity and adult language faithfully and switches off Gemini's adjustable safety filters. Google's built-in protections still apply.</small></div>
+          <div class="ctl end"><label class="switch"><input type="checkbox" id="explicit"><span></span></label></div>
+        </div>
+        <div class="row">
+          <div class="lab"><label for="overlap">Overlapping context</label><small>Sends the last 3 lines of the previous block, original and translated, as context for the next one. The prompt says clearly these lines are context only and must not be translated again.</small></div>
+          <div class="ctl end"><label class="switch"><input type="checkbox" id="overlap"><span></span></label></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ DISPLAY -->
+    <section id="tab-display" hidden>
+      <header class="phead"><h1>Subtitle display</h1><p>Drag the subtitle in the preview to place it.</p></header>
+
+      <div class="stage" id="stage">
+        <div class="scene" aria-hidden="true"><i class="sun"></i><i class="hill a"></i><i class="hill b"></i></div>
+        <div class="pvbox" id="pvbox" tabindex="0" role="slider" aria-label="Subtitle position. Use arrow keys to move." aria-valuetext=""></div>
+      </div>
+
+      <div class="grp tight">
+        <div class="row">
+          <div class="lab"><label>Text direction</label><small id="dirNote">Forced direction: a sentence that starts with an English word still reads right to left in RTL mode.</small></div>
+          <div class="ctl end"><div class="seg" id="dir" role="group" aria-label="Text direction">
+            <label><input type="radio" name="dir" value="ltr"><span>LTR</span></label>
+            <label><input type="radio" name="dir" value="rtl"><span>RTL</span></label></div></div>
+        </div>
+        <div class="row">
+          <div class="lab"><label for="color">Text color</label></div>
+          <div class="ctl end"><input type="color" id="color"></div>
+        </div>
+        <div class="row">
+          <div class="lab"><label for="bg">Background color</label></div>
+          <div class="ctl end"><input type="color" id="bg"></div>
+        </div>
+        <div class="row">
+          <div class="lab"><label for="bgOpacity">Background opacity</label></div>
+          <div class="ctl pair"><input type="range" id="bgOpacity" min="0" max="100"><output id="bgOpacityO" class="num"></output></div>
+        </div>
+        <div class="row">
+          <div class="lab"><label for="px">Horizontal position</label><small>0 is the left edge, 100 the right edge.</small></div>
+          <div class="ctl pair"><input type="range" id="px" min="0" max="100"><output id="pxO" class="num"></output></div>
+        </div>
+        <div class="row">
+          <div class="lab"><label for="py">Vertical position</label><small>0 is the top edge, 100 the bottom edge.</small></div>
+          <div class="ctl pair"><input type="range" id="py" min="0" max="100"><output id="pyO" class="num"></output></div>
+        </div>
+        <div class="row">
+          <div class="lab"><label for="fontSize">Text size</label><small>Relative to the height of the video, so it scales in fullscreen.</small></div>
+          <div class="ctl pair"><input type="range" id="fontSize" min="20" max="90"><output id="fontSizeO" class="num"></output></div>
+        </div>
+        <div class="row">
+          <div class="lab"><label for="bold">Bold text</label></div>
+          <div class="ctl end"><label class="switch"><input type="checkbox" id="bold"><span></span></label></div>
+        </div>
+        <div class="row">
+          <div class="lab"><label for="outline">Text outline</label><small>A soft dark edge that keeps text readable on bright scenes.</small></div>
+          <div class="ctl end"><label class="switch"><input type="checkbox" id="outline"><span></span></label></div>
+        </div>
+        <div class="row">
+          <div class="lab"><label for="hideOriginal">Hide the original captions</label><small>While TAS subtitles are showing, hide the site's own captions so the two never overlap.</small></div>
+          <div class="ctl end"><label class="switch"><input type="checkbox" id="hideOriginal"><span></span></label></div>
+        </div>
+        <div class="row">
+          <div class="lab"><label for="autoShowCached">Show saved translations automatically</label><small>Off by default: you press “Show subtitles” in the popup when you want them.</small></div>
+          <div class="ctl end"><label class="switch"><input type="checkbox" id="autoShowCached"><span></span></label></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ CACHE -->
+    <section id="tab-cache" hidden>
+      <header class="phead"><h1>Cache</h1><p id="cacheSummary">Loading…</p></header>
+      <div class="grp tight">
+        <div class="row">
+          <div class="lab"><label>Clear cache and translated subtitles</label><small>Removes every saved translation and any unfinished job from this browser. Settings and API keys stay.</small></div>
+          <div class="ctl end"><button class="btn danger" id="clearAll" data-icon="trash"> Clear cache</button></div>
+        </div>
+      </div>
+      <ul class="jobs" id="jobs"></ul>
+    </section>
+  </main>
+</div>
+<script src="../lib/shared.js"></script>
+<script src="../lib/icons.js"></script>
+<script src="options.js"></script>
+</body>
+</html>
