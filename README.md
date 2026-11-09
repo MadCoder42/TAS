@@ -34,7 +34,8 @@ https://aistudio.google.com/apikey and press *Fetch models*.
 | `inject.js` | MAIN-world hook of `fetch` / `XMLHttpRequest`. Sees the signed timedtext response the player already received and forwards it. |
 | `lib/captions.js` | **Timedtext to SRT.** Parses YouTube `pb3`/`json3` (incl. ASR rolling captions with `aAppend` newline events and overlapping durations), srv1/srv3 XML, TTML, VTT, SRT, generic JSON; builds SRT. |
 | `content.js` | Ingests captures, mirrors the cached/live job, draws the overlay in a Shadow DOM (fullscreen aware), answers the popup. |
-| `background.js` | Translation engine: prompt, chunking, key fallback on 429, retries, cool-down, per-block persistence, pause/resume/cancel. |
+| `background.js` | Translation engine: prompt, chunking, key fallback on 429, retries, cool-down, per-block persistence, pause/resume/cancel, encrypted key store. |
+| `lib/vault.js` | AES-GCM encryption with the non-extractable device key (loaded by the background only). |
 | `popup/` | Overview, subtitle-density strip, block manager, download. |
 | `options/` | Translation settings, display settings (live, draggable preview), cache. |
 
@@ -50,8 +51,27 @@ Notes
   English word stays right-to-left. RTL target languages switch the direction automatically.
 * *Explicit translation* adds a faithful-translation instruction and sets the adjustable Gemini safety
   categories to `BLOCK_NONE`. Google's non-adjustable protections still apply.
-* API keys live in `storage.local` and are only ever sent to `generativelanguage.googleapis.com`
-  (via the `x-goog-api-key` header). Subtitle text is sent to Gemini; nothing else leaves the browser.
+* Subtitle text is sent to Gemini; nothing else leaves the browser. API keys are only ever sent to
+  `generativelanguage.googleapis.com` (via the `x-goog-api-key` header).
+
+## API key security
+
+* Keys are encrypted with **AES-256-GCM** (WebCrypto) before they are written to storage, each with a fresh random IV,
+  and bound to their record id so ciphertexts cannot be swapped. Tampering is detected.
+* The AES key is created once as a **non-extractable** `CryptoKey` kept in IndexedDB: no code, including this
+  extension's own, can read its raw bytes; it can only ask the browser to encrypt or decrypt.
+* A key is **decrypted only inside the background script, right before a request**, used for that one call and not
+  kept. The popup, settings page and content scripts never receive a key or ciphertext, only `{label, last 4 characters}`.
+  Key management messages are refused from content scripts.
+* Keys live in their own `vault` record, not in `settings`, so content scripts (which read settings) never see them.
+
+What this does and does not protect against: it keeps keys out of storage exports, backups, sync and any
+copy of the extension's storage files, and it makes a stored key useless without the browser's IndexedDB key.
+It does **not** stop someone who has your whole unlocked browser profile or can run code inside the extension,
+because the device key has to be usable without asking you for anything. If you clear the browser's site/extension data,
+the device key is lost; affected keys then show *Re-enter key*. Keys are tied to this browser profile and do not sync.
+If an older version stored a key in plaintext, remnants can linger in the browser's internal database files until
+they are compacted; rotate that key in Google AI Studio if that matters to you.
 
 Limitations: video fullscreen on sites that fullscreen the bare `<video>` element cannot show page
 overlays; HLS subtitle playlists (segmented VTT) and DRM players that do not expose text tracks are not captured.

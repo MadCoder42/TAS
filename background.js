@@ -6,7 +6,7 @@
  *   - every request to Gemini goes through one limiter that enforces the cool-down between requests
  *   - API keys are tried in order; a 429 puts that key on cool-down and the next key takes over
  */
-if (typeof importScripts === 'function') importScripts('lib/shared.js', 'lib/captions.js');
+if (typeof importScripts === 'function') importScripts('lib/shared.js', 'lib/captions.js', 'lib/vault.js');
 
 const { ext } = GST;
 const API = 'https://generativelanguage.googleapis.com/v1beta';
@@ -48,7 +48,7 @@ function saveJob(job) {
     const idx = await getIndex();
     idx[job.key] = indexEntry(job);
     await ext.storage.local.set({ [JOB + job.key]: job, jobIndex: idx });
-  }).catch((e) => console.warn('[TAS] save failed', e));
+  }).catch((e) => console.warn('[Lumisub] save failed', e));
   saveChains.set(job.key, p);
   return p;
 }
@@ -88,6 +88,104 @@ async function clearAllJobs() {
   await ext.storage.local.set({ jobIndex: {} });
   keys.forEach((k) => broadcast(k.slice(JOB.length), { type: 'job:deleted', key: k.slice(JOB.length) }));
   return keys.length;
+}
+
+/* ================================================================== API key vault
+ * Keys are stored as { id, label, enc, tail, fp, enabled }. `enc` is AES-GCM ciphertext (lib/vault.js);
+ * `tail` is the last 4 characters for display; `fp` is a short hash used only to detect duplicates.
+ * Plaintext exists only inside withSecret() for the duration of one request. Nothing outside this file
+ * ever receives ciphertext or plaintext back: popup and options only see { id, label, tail, enabled }. */
+const VAULT = 'vault';
+let vaultChain = Promise.resolve();
+async function readVault() {
+  const v = (await ext.storage.local.get(VAULT))[VAULT];
+  return v && Array.isArray(v.keys) ? v.keys : [];
+}
+function mutateVault(fn) { // single writer, serialised
+  const p = vaultChain.then(async () => {
+    const keys = await readVault();
+    const out = await fn(keys);
+    await ext.storage.local.set({ [VAULT]: { v: 1, keys } });
+    return out;
+  });
+  vaultChain = p.catch(() => {});
+  return p;
+}
+const publicKeys = (keys) => keys.map((k) => ({ id: k.id, label: k.label, tail: k.tail, enabled: k.enabled !== false }));
+
+/** Decrypts one record for the duration of `fn`, then lets go of the plaintext. */
+const UNREADABLE = 'This key cannot be decrypted any more (browser data was cleared). Remove it and add it again.';
+async function withSecret(rec, fn) {
+  let secret;
+  try { secret = await GST.vault.decrypt(rec.enc, rec.id); }
+  catch (e) { throw Object.assign(new Error('decrypt failed'), { decryptFailed: true }); }
+  try { return await fn(secret); } finally { secret = null; }
+}
+
+/** One-time upgrade: encrypt plaintext keys saved by older versions, then remove them from settings. */
+let migration = null;
+function migrateLegacyKeys() {
+  if (!migration) {
+    migration = (async () => {
+      const st = (await ext.storage.local.get('settings')).settings;
+      if (!st || !Array.isArray(st.keys)) return 0;
+      const legacy = st.keys.filter((k) => k && typeof k.key === 'string' && k.key);
+      await mutateVault(async (keys) => {
+        for (const k of legacy) {
+          const fp = await GST.vault.fingerprint(k.key);
+          if (keys.some((x) => x.fp === fp)) continue;
+          const id = k.id || GST.uid();
+          keys.push({ id, label: k.label || `Key ${keys.length + 1}`, enc: await GST.vault.encrypt(k.key, id), tail: k.key.slice(-4), fp, enabled: k.enabled !== false });
+        }
+      });
+      // reached only when every key was encrypted and stored; a failure above leaves the old data untouched
+      delete st.keys;
+      await ext.storage.local.set({ settings: st });
+      return legacy.length;
+    })().catch((e) => { migration = null; console.warn('[Lumisub] key migration failed', e); return 0; });
+  }
+  return migration;
+}
+async function listKeys() { await migrateLegacyKeys(); return readVault(); }
+async function hasKeys() { return (await listKeys()).some((k) => k.enabled !== false); }
+
+async function addKeys(list) {
+  await migrateLegacyKeys();
+  let added = 0, dup = 0;
+  await mutateVault(async (keys) => {
+    for (let raw of list) {
+      raw = String(raw || '').trim();
+      if (raw.length < 16) continue;
+      const fp = await GST.vault.fingerprint(raw);
+      if (keys.some((x) => x.fp === fp)) { dup++; continue; }
+      const id = GST.uid();
+      keys.push({ id, label: `Key ${keys.length + 1}`, enc: await GST.vault.encrypt(raw, id), tail: raw.slice(-4), fp, enabled: true });
+      added++;
+    }
+  });
+  return { ok: true, added, duplicates: dup, keys: publicKeys(await readVault()) };
+}
+async function updateKey({ id, label, enabled }) {
+  await mutateVault(async (keys) => {
+    const k = keys.find((x) => x.id === id);
+    if (!k) return;
+    if (typeof label === 'string') k.label = label.slice(0, 40);
+    if (typeof enabled === 'boolean') k.enabled = enabled;
+  });
+  return { ok: true, keys: publicKeys(await readVault()) };
+}
+async function removeKey(id) {
+  await mutateVault(async (keys) => { const i = keys.findIndex((x) => x.id === id); if (i >= 0) keys.splice(i, 1); });
+  await ensureKeyState();
+  if (keyState[id]) { delete keyState[id]; persistKeyState(); }
+  return { ok: true, keys: publicKeys(await readVault()) };
+}
+async function moveKey(id, dir) {
+  await mutateVault(async (keys) => {
+    const i = keys.findIndex((x) => x.id === id), j = i + (dir < 0 ? -1 : 1);
+    if (i >= 0 && j >= 0 && j < keys.length) [keys[i], keys[j]] = [keys[j], keys[i]];
+  });
+  return { ok: true, keys: publicKeys(await readVault()) };
 }
 
 /* ================================================================== job helpers */
@@ -168,18 +266,19 @@ function markCooldown(k, err) {
   keyState[k.id] = { until: Date.now() + secs * 1000, reason: daily ? 'daily quota' : 'rate limit' };
   persistKeyState();
 }
-function markInvalid(k, reason) { keyState[k.id] = { status: 'invalid', reason }; persistKeyState(); }
+function markInvalid(k, reason, kind) { keyState[k.id] = { status: kind || 'invalid', reason }; persistKeyState(); }
+const isDead = (st) => !!st && (st.status === 'invalid' || st.status === 'unreadable');
 
-async function acquireKey(settings, ctx) {
+async function acquireKey(ctx) {
   await ensureKeyState();
   for (;;) {
     if (ctx.signal.aborted) throw abortErr();
-    const enabled = settings.keys.filter((k) => k.key && k.enabled !== false);
-    if (!enabled.length) throw fatal('no-keys', 'No API key is enabled. Add one in the TAS settings.');
-    const usable = enabled.filter((k) => !(keyState[k.id] && keyState[k.id].status === 'invalid'));
+    const enabled = (await listKeys()).filter((k) => k.enabled !== false);
+    if (!enabled.length) throw fatal('no-keys', 'No API key is enabled. Add one in the Lumisub settings.');
+    const usable = enabled.filter((k) => !isDead(keyState[k.id]));
     if (!usable.length) {
       const why = enabled.map((k) => keyState[k.id] && keyState[k.id].reason).filter(Boolean)[0];
-      throw fatal('invalid-keys', 'Google rejected every API key' + (why ? ` (${why})` : '') + '. Check them in the settings.');
+      throw fatal('invalid-keys', 'None of your API keys can be used' + (why ? ` (${why})` : '') + '. Check them in the settings.');
     }
     const now = Date.now();
     const free = usable.find((k) => !(keyState[k.id] && keyState[k.id].until > now));
@@ -218,18 +317,20 @@ function limited(fn, signal) {
 
 async function callGemini(prompt, settings, ctx) {
   for (;;) {
-    const key = await acquireKey(settings, ctx);
+    const key = await acquireKey(ctx);
     const body = { contents: [{ role: 'user', parts: [{ text: prompt }] }] };
     if (settings.explicit) body.safetySettings = SAFETY_OFF;
     let res;
     try {
-      res = await fetch(`${API}/models/${encodeURIComponent(settings.model)}:generateContent`, {
+      // The key is decrypted here, used for this single request, and not kept anywhere.
+      res = await withSecret(key, (secret) => fetch(`${API}/models/${encodeURIComponent(settings.model)}:generateContent`, {
         method: 'POST', signal: ctx.signal,
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key.key },
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': secret },
         body: JSON.stringify(body),
-      });
+      }));
     } catch (e) {
       if (ctx.signal.aborted) throw abortErr();
+      if (e && e.decryptFailed) { markInvalid(key, UNREADABLE, 'unreadable'); continue; }
       throw new Error('Network error: ' + (e.message || e));
     }
     if (res.status === 429) { markCooldown(key, await readErr(res)); continue; } // fall back to the next key
@@ -396,7 +497,6 @@ function launch(job) {
   runners.set(job.key, r);
   runJob(job, r);
 }
-async function hasKeys() { return (await GST.getSettings()).keys.some((k) => k.key && k.enabled !== false); }
 
 /* ================================================================== commands */
 async function startJob({ key, meta, cues, restart, run }) {
@@ -461,21 +561,22 @@ async function editLine(key, idx, text) {
 /* ================================================================== models and key tests */
 const EXCL = /embedding|aqa|imagen|veo|lyria|tts|image|live|audio|robotics|computer-use|deep-research|learnlm|nano-banana/i;
 async function fetchModels() {
-  const s = await GST.getSettings();
-  const keys = s.keys.filter((k) => k.key && k.enabled !== false);
+  const keys = (await listKeys()).filter((k) => k.enabled !== false);
   if (!keys.length) return { ok: false, error: 'Add an API key first.' };
   let lastErr = '';
   for (const k of keys) {
     try {
       const out = [];
-      let token = '';
-      do {
-        const res = await fetch(`${API}/models?pageSize=200${token ? '&pageToken=' + encodeURIComponent(token) : ''}`, { headers: { 'x-goog-api-key': k.key } });
-        if (!res.ok) { const e = await readErr(res); throw new Error(`HTTP ${res.status}: ${e.message}`); }
-        const j = await res.json();
-        out.push(...(j.models || []));
-        token = j.nextPageToken || '';
-      } while (token);
+      await withSecret(k, async (secret) => {
+        let token = '';
+        do {
+          const res = await fetch(`${API}/models?pageSize=200${token ? '&pageToken=' + encodeURIComponent(token) : ''}`, { headers: { 'x-goog-api-key': secret } });
+          if (!res.ok) { const e = await readErr(res); throw new Error(`HTTP ${res.status}: ${e.message}`); }
+          const j = await res.json();
+          out.push(...(j.models || []));
+          token = j.nextPageToken || '';
+        } while (token);
+      });
       const list = out
         .filter((m) => (m.supportedGenerationMethods || []).includes('generateContent') && !EXCL.test(m.name))
         .map((m) => ({
@@ -486,36 +587,49 @@ async function fetchModels() {
       const at = Date.now();
       await ext.storage.local.set({ models: { at, list } });
       return { ok: true, list, at };
-    } catch (e) { lastErr = e.message || String(e); }
+    } catch (e) {
+      if (e && e.decryptFailed) { await ensureKeyState(); markInvalid(k, UNREADABLE, 'unreadable'); lastErr = UNREADABLE; }
+      else lastErr = e.message || String(e);
+    }
   }
   return { ok: false, error: lastErr || 'Could not load models.' };
 }
 async function testKey({ id, key }) {
   await ensureKeyState();
-  const s = await GST.getSettings();
-  const k = key ? { id: id || '_tmp', key } : s.keys.find((x) => x.id === id);
-  if (!k || !k.key) return { ok: false, error: 'Key not found.' };
-  try {
-    const res = await fetch(`${API}/models?pageSize=1`, { headers: { 'x-goog-api-key': k.key } });
-    if (res.ok) { if (id) { delete keyState[id]; persistKeyState(); } return { ok: true }; }
-    const e = await readErr(res);
-    if (id && (res.status === 400 || res.status === 403 || res.status === 401)) markInvalid(k, `${res.status}: ${e.message.slice(0, 120)}`);
-    return { ok: false, error: e.message };
-  } catch (e) { return { ok: false, error: 'Network error: ' + (e.message || e) }; }
+  const run = async (secret, tracked) => {
+    try {
+      const res = await fetch(`${API}/models?pageSize=1`, { headers: { 'x-goog-api-key': secret } });
+      if (res.ok) { if (tracked) { delete keyState[id]; persistKeyState(); } return { ok: true }; }
+      const e = await readErr(res);
+      if (tracked && (res.status === 400 || res.status === 403 || res.status === 401)) markInvalid({ id }, `${res.status}: ${e.message.slice(0, 120)}`);
+      return { ok: false, error: e.message };
+    } catch (e) { return { ok: false, error: 'Network error: ' + (e.message || e) }; }
+  };
+  if (key) return run(String(key).trim(), false);
+  const rec = (await listKeys()).find((x) => x.id === id);
+  if (!rec) return { ok: false, error: 'Key not found.' };
+  try { return await withSecret(rec, (secret) => run(secret, true)); }
+  catch (e) {
+    if (e && e.decryptFailed) { markInvalid(rec, UNREADABLE, 'unreadable'); return { ok: false, error: UNREADABLE }; }
+    return { ok: false, error: String((e && e.message) || e) };
+  }
 }
 async function keysState() {
   await ensureKeyState();
   const now = Date.now();
   const out = {};
   for (const [id, v] of Object.entries(keyState)) {
-    if (v.status === 'invalid') out[id] = { status: 'invalid', reason: v.reason };
+    if (isDead(v)) out[id] = { status: v.status, reason: v.reason };
     else if (v.until > now) out[id] = { status: 'cooldown', until: v.until, reason: v.reason };
   }
-  return { ok: true, state: out };
+  return { ok: true, state: out, keys: publicKeys(await listKeys()) };
 }
 
 /* ================================================================== RPC */
-async function handle(m) {
+const EXT_ONLY = /^bg:(keys|models|cache)/; // key management is only for the extension's own pages
+const fromExtensionPage = (sender) => !!(sender && sender.url && sender.url.startsWith(ext.runtime.getURL('')));
+async function handle(m, sender) {
+  if (EXT_ONLY.test(m.type) && !fromExtensionPage(sender)) return { ok: false, error: 'Not allowed' };
   switch (m.type) {
     case 'bg:job:get': {
       const job = await loadJob(m.key);
@@ -534,6 +648,11 @@ async function handle(m) {
     }
     case 'bg:cache:clear': return { ok: true, removed: await clearAllJobs() };
     case 'bg:keys:state': return keysState();
+    case 'bg:keys:list': return { ok: true, keys: publicKeys(await listKeys()) };
+    case 'bg:keys:add': return addKeys(Array.isArray(m.keys) ? m.keys : []);
+    case 'bg:keys:update': return updateKey(m);
+    case 'bg:keys:remove': return removeKey(m.id);
+    case 'bg:keys:move': return moveKey(m.id, m.dir);
     case 'bg:keys:test': return testKey(m);
     case 'bg:models:fetch': return fetchModels();
     default: return { ok: false, error: 'Unknown command' };
@@ -541,7 +660,11 @@ async function handle(m) {
 }
 ext.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || typeof msg.type !== 'string' || !msg.type.startsWith('bg:')) return false;
-  handle(msg).then(sendResponse, (e) => sendResponse({ ok: false, error: (e && e.message) || String(e) }));
+  handle(msg, sender).then(sendResponse, (e) => sendResponse({ ok: false, error: (e && e.message) || String(e) }));
   return true;
 });
-ext.runtime.onInstalled.addListener((d) => { if (d.reason === 'install') ext.runtime.openOptionsPage().catch(() => {}); });
+ext.runtime.onInstalled.addListener((d) => {
+  migrateLegacyKeys(); // encrypt keys saved in plaintext by an older version
+  if (d.reason === 'install') ext.runtime.openOptionsPage().catch(() => {});
+});
+migrateLegacyKeys();

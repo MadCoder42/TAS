@@ -5,7 +5,7 @@
   const COLS = 64;
 
   const S = {
-    tabId: null, page: null, settings: GST.mergeSettings(null), hasKey: false,
+    tabId: null, page: null, settings: GST.mergeSettings(null), hasKey: false, keysList: [],
     job: null, cues: null, tr: null, jobKey: null, port: null,
     strip: null, open: new Set(), filter: 'all', busyAction: false, keysState: {}, tab: 'home',
     plateText: '', playMs: 0, confirmRestart: 0,
@@ -200,11 +200,11 @@
   }
 
   function renderKeyline() {
-    const keys = S.settings.keys.filter((k) => k.key && k.enabled !== false);
+    const keys = S.keysList.filter((k) => k.enabled !== false);
     const el = $('#keyline');
     if (!keys.length) { el.textContent = 'No API key yet.'; return; }
     const cooling = keys.filter((k) => S.keysState[k.id] && S.keysState[k.id].status === 'cooldown');
-    const bad = keys.filter((k) => S.keysState[k.id] && S.keysState[k.id].status === 'invalid');
+    const bad = keys.filter((k) => S.keysState[k.id] && ['invalid', 'unreadable'].includes(S.keysState[k.id].status));
     let t = `${keys.length} ${keys.length === 1 ? 'key' : 'keys'}`;
     if (bad.length) t += `, ${bad.length} rejected`;
     if (cooling.length) t += `, ${cooling.length} cooling down`;
@@ -505,24 +505,27 @@
 
   async function pollKeys() {
     const r = await GST.rpc({ type: 'bg:keys:state' });
-    if (r && r.ok) { S.keysState = r.state; renderKeyline(); }
+    if (r && r.ok) {
+      const had = S.hasKey;
+      S.keysState = r.state; S.keysList = r.keys || [];
+      S.hasKey = S.keysList.some((k) => k.enabled !== false);
+      if (had !== S.hasKey) render(); else renderKeyline();
+    }
   }
 
   async function init() {
     if (FULL) document.body.classList.add('full');
     GST.mountIcons();
     S.settings = await GST.getSettings();
-    S.hasKey = S.settings.keys.some((k) => k.key && k.enabled !== false);
+    await pollKeys();
     if (qs.get('tab')) S.tabId = +qs.get('tab');
     else { const [t] = await ext.tabs.query({ active: true, currentWindow: true }); S.tabId = t ? t.id : null; }
     ext.storage.onChanged.addListener((ch, area) => {
       if (area !== 'local' || !ch.settings) return;
       S.settings = GST.mergeSettings(ch.settings.newValue);
-      S.hasKey = S.settings.keys.some((k) => k.key && k.enabled !== false);
       S.plateText = ''; refreshPage();
     });
     await refreshPage();
-    pollKeys();
     let n = 0;
     setInterval(async () => {
       n++;

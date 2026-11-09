@@ -16,7 +16,7 @@
   "host_permissions": ["https://generativelanguage.googleapis.com/*"],
   "background": {
     "service_worker": "background.js",
-    "scripts": ["lib/shared.js", "lib/captions.js", "background.js"]
+    "scripts": ["lib/shared.js", "lib/captions.js", "lib/vault.js", "background.js"]
   },
   "content_scripts": [
     {

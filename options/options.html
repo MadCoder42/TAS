@@ -26,7 +26,7 @@
 
       <div class="grp">
         <h2>API keys</h2>
-        <p class="gdesc">Keys are tried from top to bottom. When one hits its usage limit (error 429), the next one takes over until the first recovers. Keys stay in this browser and are only sent to Google's Gemini API.</p>
+        <p class="gdesc">Keys are tried from top to bottom. When one hits its usage limit (error 429), the next one takes over until the first recovers. Keys are encrypted (AES-256-GCM) before they are saved and are only decrypted for the instant a request is sent, so they are never shown again after you add them. They go nowhere except Google's Gemini API.</p>
         <ol class="keys" id="keys"></ol>
         <div class="addkeys">
           <textarea id="newKeys" rows="2" placeholder="Paste one or more API keys, separated by spaces or new lines" aria-label="New API keys" spellcheck="false" autocomplete="off"></textarea>

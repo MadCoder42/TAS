@@ -44,12 +44,16 @@
     el.addEventListener('change', () => { set(el.checked); touch(); if (after) after(); });
   }
 
-  /* ================================================================ API keys */
-  const mask = (k) => (k.length <= 10 ? '••••••' : k.slice(0, 4) + '••••••••' + k.slice(-4));
+  /* ================================================================ API keys
+   * The page never sees a stored key: the background keeps them encrypted and hands back only
+   * { id, label, last 4 characters, enabled }. */
+  let keys = [];
+  const mask = (k) => 'AIza••••••••' + (k.tail || '');
+  const setKeys = (list) => { if (Array.isArray(list)) { keys = list; renderKeys(); } };
   function renderKeys() {
     const ol = $('#keys');
     ol.innerHTML = '';
-    S.keys.forEach((k, i) => {
+    keys.forEach((k, i) => {
       const li = document.createElement('li');
       li.className = 'key' + (k.enabled === false ? ' off' : '');
       li.dataset.id = k.id;
@@ -60,50 +64,54 @@
         <label class="switch" title="Use this key"><input type="checkbox" class="ken" aria-label="Use this key"><span></span></label>
         <button class="btn icon sm ktest" title="Test key" aria-label="Test key">${GST.icon('bolt')}</button>
         <button class="btn icon sm kup" title="Use earlier" aria-label="Move up" ${i === 0 ? 'disabled' : ''}>${GST.icon('up')}</button>
-        <button class="btn icon sm kdn" title="Use later" aria-label="Move down" ${i === S.keys.length - 1 ? 'disabled' : ''}>${GST.icon('down')}</button>
+        <button class="btn icon sm kdn" title="Use later" aria-label="Move down" ${i === keys.length - 1 ? 'disabled' : ''}>${GST.icon('down')}</button>
         <button class="btn icon sm kdel" title="Remove key" aria-label="Remove key">${GST.icon('trash')}</button>`;
       li.querySelector('.klabel').value = k.label || `Key ${i + 1}`;
-      li.querySelector('.kval').textContent = mask(k.key);
+      li.querySelector('.kval').textContent = mask(k);
       li.querySelector('.ken').checked = k.enabled !== false;
       ol.appendChild(li);
     });
     paintKeyStates();
+    renderModelButton();
   }
   function paintKeyStates() {
     document.querySelectorAll('.key').forEach((li) => {
-      const k = S.keys.find((x) => x.id === li.dataset.id);
+      const k = keys.find((x) => x.id === li.dataset.id);
       const st = keysState[li.dataset.id];
       const c = li.querySelector('.kst');
       if (!k) return;
       if (k.enabled === false) { c.className = 'chip kst'; c.textContent = 'Off'; c.title = ''; }
+      else if (st && st.status === 'unreadable') { c.className = 'chip bad kst'; c.textContent = 'Re-enter key'; c.title = st.reason || ''; }
       else if (st && st.status === 'invalid') { c.className = 'chip bad kst'; c.textContent = 'Rejected'; c.title = st.reason || ''; }
       else if (st && st.status === 'cooldown') { c.className = 'chip warn kst'; c.textContent = `Cooling ${Math.max(1, Math.ceil((st.until - Date.now()) / 1000))} s`; c.title = st.reason || ''; }
       else { c.className = 'chip ok kst'; c.innerHTML = '<span class="dot"></span>Ready'; c.title = ''; }
     });
   }
+  const labelTimers = {};
   $('#keys').addEventListener('input', (e) => {
     if (!e.target.classList.contains('klabel')) return;
-    const k = S.keys.find((x) => x.id === e.target.closest('.key').dataset.id);
-    if (k) { k.label = e.target.value; touch(); }
+    const id = e.target.closest('.key').dataset.id, label = e.target.value;
+    const k = keys.find((x) => x.id === id); if (k) k.label = label;
+    savedEl.classList.add('busy'); savedText.textContent = 'Saving…';
+    clearTimeout(labelTimers[id]);
+    labelTimers[id] = setTimeout(async () => { await GST.rpc({ type: 'bg:keys:update', id, label }); savedEl.classList.remove('busy'); savedText.textContent = 'All changes saved'; }, 350);
   });
-  $('#keys').addEventListener('change', (e) => {
+  $('#keys').addEventListener('change', async (e) => {
     if (!e.target.classList.contains('ken')) return;
-    const k = S.keys.find((x) => x.id === e.target.closest('.key').dataset.id);
-    if (k) { k.enabled = e.target.checked; touch(); renderKeys(); }
+    const r = await GST.rpc({ type: 'bg:keys:update', id: e.target.closest('.key').dataset.id, enabled: e.target.checked });
+    if (r && r.ok) setKeys(r.keys);
   });
   $('#keys').addEventListener('click', async (e) => {
     const li = e.target.closest('.key');
     if (!li) return;
-    const i = S.keys.findIndex((x) => x.id === li.dataset.id);
-    if (i < 0) return;
-    if (e.target.closest('.kdel')) { S.keys.splice(i, 1); touch(); renderKeys(); }
-    else if (e.target.closest('.kup') && i > 0) { [S.keys[i - 1], S.keys[i]] = [S.keys[i], S.keys[i - 1]]; touch(); renderKeys(); }
-    else if (e.target.closest('.kdn') && i < S.keys.length - 1) { [S.keys[i + 1], S.keys[i]] = [S.keys[i], S.keys[i + 1]]; touch(); renderKeys(); }
+    const id = li.dataset.id;
+    if (e.target.closest('.kdel')) { const r = await GST.rpc({ type: 'bg:keys:remove', id }); if (r && r.ok) setKeys(r.keys); }
+    else if (e.target.closest('.kup')) { const r = await GST.rpc({ type: 'bg:keys:move', id, dir: -1 }); if (r && r.ok) setKeys(r.keys); }
+    else if (e.target.closest('.kdn')) { const r = await GST.rpc({ type: 'bg:keys:move', id, dir: 1 }); if (r && r.ok) setKeys(r.keys); }
     else if (e.target.closest('.ktest')) {
       const c = li.querySelector('.kst');
       c.className = 'chip kst'; c.textContent = 'Testing…';
-      await ext.storage.local.set({ settings: S });
-      const r = await GST.rpc({ type: 'bg:keys:test', id: S.keys[i].id });
+      const r = await GST.rpc({ type: 'bg:keys:test', id });
       await pollKeys();
       if (r && r.ok) { c.className = 'chip ok kst'; c.innerHTML = '<span class="dot"></span>Works'; }
       else { c.className = 'chip bad kst'; c.textContent = 'Failed'; c.title = (r && r.error) || ''; alert('This key did not work:\n\n' + ((r && r.error) || 'No answer')); }
@@ -112,19 +120,21 @@
   $('#addKeys').addEventListener('click', async () => {
     const parts = $('#newKeys').value.split(/[\s,;]+/).map((x) => x.trim()).filter((x) => x.length >= 16);
     if (!parts.length) { $('#newKeys').focus(); return; }
-    let added = 0;
-    for (const key of parts) {
-      if (S.keys.some((k) => k.key === key)) continue;
-      S.keys.push({ id: GST.uid(), label: `Key ${S.keys.length + 1}`, key, enabled: true });
-      added++;
+    $('#newKeys').value = ''; // the plaintext leaves this page immediately
+    const r = await GST.rpc({ type: 'bg:keys:add', keys: parts });
+    if (r && r.ok) {
+      setKeys(r.keys);
+      if (r.duplicates) { savedText.textContent = `${r.duplicates} duplicate ${r.duplicates === 1 ? 'key was' : 'keys were'} skipped`; }
+      if (r.added) fetchModels(true);
     }
-    $('#newKeys').value = '';
-    touch(); renderKeys();
-    if (added) { await ext.storage.local.set({ settings: S }); fetchModels(true); }
   });
   async function pollKeys() {
     const r = await GST.rpc({ type: 'bg:keys:state' });
-    if (r && r.ok) { keysState = r.state; paintKeyStates(); }
+    if (r && r.ok) {
+      keysState = r.state;
+      const sig = (l) => l.map((k) => k.id + k.enabled).join();
+      if (r.keys && sig(r.keys) !== sig(keys)) setKeys(r.keys); else paintKeyStates();
+    }
   }
 
   /* ================================================================ models */
@@ -135,7 +145,7 @@
     $('#modelId').textContent = S.model;
     const st = $('#modelStatus');
     if (models.list.length) st.textContent = `${models.list.length} models available, fetched ${rel(models.at)}.`;
-    else st.textContent = S.keys.length ? 'Press “Fetch models” to load the list from the endpoint.' : 'Add an API key to load the model list.';
+    else st.textContent = keys.length ? 'Press “Fetch models” to load the list from the endpoint.' : 'Add an API key to load the model list.';
   }
   function renderModelList() {
     const q = $('#modelSearch').value.trim().toLowerCase();
@@ -182,7 +192,6 @@
     const btn = $('#fetchModels');
     btn.disabled = true; btn.firstElementChild && btn.firstElementChild.classList.add('spin');
     $('#modelStatus').textContent = 'Fetching models…';
-    await ext.storage.local.set({ settings: S });
     const r = await GST.rpc({ type: 'bg:models:fetch' });
     btn.disabled = false; btn.firstElementChild && btn.firstElementChild.classList.remove('spin');
     if (r && r.ok) { models = { at: r.at, list: r.list }; renderModelButton(); }
@@ -362,6 +371,8 @@
     const o = await ext.storage.local.get('models');
     if (o.models) models = o.models;
 
+    const kl = await GST.rpc({ type: 'bg:keys:list' });
+    if (kl && kl.ok) keys = kl.keys;
     renderKeys(); buildLanguage(); buildTones(); bindDisplay(); renderModelButton();
     bindPair('#blockSizeR', '#blockSize', () => S.blockSize, (v) => { S.blockSize = Math.max(1, Math.min(300, Math.round(v))); });
     bindPair('#cooldownR', '#cooldown', () => S.cooldownMs / 1000, (v) => { S.cooldownMs = Math.max(0, Math.round(v * 1000)); });
@@ -374,7 +385,7 @@
     const tab = location.hash.slice(1);
     showTab(['translation', 'display', 'cache'].includes(tab) ? tab : 'translation');
     pollKeys(); setInterval(pollKeys, 2000);
-    if (S.keys.some((k) => k.key && k.enabled !== false) && (!models.list.length || Date.now() - models.at > 6 * 3600 * 1000)) fetchModels(true);
+    if (keys.some((k) => k.enabled !== false) && (!models.list.length || Date.now() - models.at > 6 * 3600 * 1000)) fetchModels(true);
   }
   init();
 })();
