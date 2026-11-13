@@ -244,7 +244,9 @@
     host.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;overflow:hidden;pointer-events:none;z-index:2147483647;contain:layout style;display:none;';
     const sh = host.attachShadow({ mode: 'closed' });
     sh.innerHTML = `<style>
-      .box{position:absolute;display:flex;flex-direction:column;align-items:center;max-width:92%;pointer-events:none;transition:translate .18s ease}
+      /* width:max-content matters: an absolutely positioned box otherwise shrink-wraps to the space left of its
+         left offset, which made lines wrap at ~50% of the video (or far less off-centre) whatever max-width said. */
+      .box{position:absolute;display:flex;flex-direction:column;align-items:center;width:max-content;max-width:var(--mw,92%);pointer-events:none;transition:translate .18s ease}
       .box.drag{transition:none}
       .ln{pointer-events:auto;cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;width:fit-content;max-width:100%;margin:2px 0;padding:.12em .55em .2em;border-radius:.3em;text-align:center;white-space:pre-wrap;overflow-wrap:anywhere;
         line-height:1.5;unicode-bidi:isolate;color:var(--fg);background:var(--bg);font-size:var(--fs);font-weight:var(--fw);text-shadow:var(--ts);
@@ -365,12 +367,14 @@
     host.style.width = r.width + 'px'; host.style.height = r.height + 'px';
 
     const fsPx = Math.max(10, d.fontSize * r.height / 100);
-    const sig = [d.color, d.bg, d.bgOpacity, d.dir, d.bold, d.outline, fsPx.toFixed(1)].join('|');
+    const mw = GST.maxWidthPct(d);
+    const sig = [d.color, d.bg, d.bgOpacity, d.dir, d.bold, d.outline, fsPx.toFixed(1), mw].join('|');
     if (sig !== styleSig) {
       styleSig = sig; lastKey = null;
       box.style.setProperty('--fg', d.color);
       box.style.setProperty('--bg', GST.hexToRgba(d.bg, d.bgOpacity));
       box.style.setProperty('--fs', fsPx.toFixed(1) + 'px');
+      box.style.setProperty('--mw', mw + '%');
       box.style.setProperty('--fw', d.bold ? '700' : '500');
       box.style.setProperty('--ts', d.outline ? '0 0 3px #000,0 0 3px #000,1px 1px 2px #000' : 'none');
     }

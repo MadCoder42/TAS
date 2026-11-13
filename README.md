@@ -28,7 +28,10 @@ https://aistudio.google.com/apikey and press *Fetch models*.
    This only affects the page you are on: it is kept in memory, not saved to settings, and it is dropped when you
    open another video, reload the page, change the saved position in settings, or double-click the subtitle.
    The position in *Settings > Subtitle display* is the saved default for every page.
-6. Visit the same video later: the popup says *Translated*; flip *Show subtitles* to load it from storage.
+6. **Maximum width:** *Settings > Subtitle display > Maximum width* sets how much of the video's width a subtitle line may use
+   (30 to 100 %, default 92). Raise it to keep words on one line instead of wrapping; lower it for narrower, taller blocks.
+   The preview shows the result live. The limit is measured from the video, so it behaves the same wherever you drag the subtitle.
+7. Visit the same video later: the popup says *Translated*; flip *Show subtitles* to load it from storage.
    An unfinished job continues from the first unfinished block.
 
 ## How it works

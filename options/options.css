@@ -106,7 +106,7 @@ a { color: var(--accent); }
 .hill { bottom: -2%; width: 90%; height: 40%; border-radius: 50% 50% 0 0; }
 .hill.a { left: -20%; background: #2b2361; }
 .hill.b { left: 30%; width: 85%; height: 32%; background: #1b1646; }
-.pvbox { position: absolute; display: flex; flex-direction: column; align-items: center; max-width: 92%; cursor: grab; outline-offset: 4px; }
+.pvbox { position: absolute; display: flex; flex-direction: column; align-items: center; width: max-content; max-width: var(--mw, 92%); cursor: grab; outline-offset: 4px; } /* max-content: see the note on .box in content.js */
 .pvbox:active { cursor: grabbing; }
 .pl { width: fit-content; max-width: 100%; margin: 2px 0; padding: .12em .55em .2em; border-radius: .3em; text-align: center; line-height: 1.5; unicode-bidi: isolate; font-family: var(--font-fa); overflow-wrap: anywhere; }
 

@@ -250,12 +250,14 @@
 
   /* ================================================================ display */
   const SAMPLE = {
-    rtl: ['Gemini می‌تواند زیرنویس را در چند ثانیه ترجمه کند.', 'خط دوم برای بررسی شکستن متن'],
-    ltr: ['This is how your subtitles will look.', 'A second line to check wrapping.'],
+    rtl: ['Gemini می‌تواند زیرنویس را در چند ثانیه ترجمه کند.', 'یک خط دوم بلندتر برای نشان دادن شکستن متن در بیشترین عرضی که تعیین کرده‌اید.'],
+    ltr: ['This is how your subtitles will look.', 'A longer second line, to show where text wraps at the maximum width you set.'],
   };
   function renderPreview() {
     const d = S.display, stage = $('#stage'), box = $('#pvbox');
     const H = stage.clientHeight || 300;
+    const mw = GST.maxWidthPct(d);
+    box.style.setProperty('--mw', mw + '%');
     box.style.left = d.x + '%'; box.style.top = d.y + '%';
     box.style.transform = `translate(-${d.x}%,-${d.y}%)`;
     const lines = SAMPLE[d.dir] || SAMPLE.ltr;
@@ -273,12 +275,14 @@
     $('#pxO').textContent = d.x; $('#pyO').textContent = d.y;
     $('#bgOpacityO').textContent = Math.round(d.bgOpacity * 100) + '%';
     $('#fontSizeO').textContent = d.fontSize.toFixed(1);
+    $('#maxWidthO').textContent = mw + '%';
   }
   function syncDisplayControls() {
     const d = S.display;
     $('#color').value = d.color; $('#bg').value = d.bg;
     $('#bgOpacity').value = Math.round(d.bgOpacity * 100);
     $('#px').value = d.x; $('#py').value = d.y; $('#fontSize').value = Math.round(d.fontSize * 10);
+    $('#maxWidth').value = GST.maxWidthPct(d);
     document.querySelectorAll('#dir input').forEach((r) => { r.checked = r.value === d.dir; });
   }
   function bindDisplay() {
@@ -291,6 +295,7 @@
     on('#px', (t) => { d.x = +t.value; });
     on('#py', (t) => { d.y = +t.value; });
     on('#fontSize', (t) => { d.fontSize = +t.value / 10; });
+    on('#maxWidth', (t) => { d.maxWidth = +t.value; });
     document.querySelectorAll('#dir input').forEach((r) => r.addEventListener('change', () => { d.dir = r.value; touch(); renderPreview(); }));
     ['bold', 'outline', 'hideOriginal', 'autoShowCached'].forEach((k) => bindCheck('#' + k, () => d[k], (v) => { d[k] = v; }, renderPreview));
 
