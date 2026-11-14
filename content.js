@@ -352,7 +352,8 @@
 
   function paint() {
     const v = pickVideo();
-    if (!v || !job) { if (overlay) overlay.host.style.display = 'none'; return; }
+    // Single gate for every caller: never draw (or re-attach) the overlay unless "Show subtitles" is on.
+    if (!v || !job || !overlayVisible) { if (overlay) overlay.host.style.display = 'none'; return; }
     const { host, box } = ensureOverlay();
     const d = settings.display;
 
@@ -418,8 +419,9 @@
     if (shouldShow()) { if (!raf) raf = requestAnimationFrame(tick); paint(); }
     else if (overlay) overlay.host.style.display = 'none';
   }
-  document.addEventListener('fullscreenchange', () => paint());
-  document.addEventListener('webkitfullscreenchange', () => paint());
+  // render(), not paint(): a fullscreen change must not turn the overlay on when "Show subtitles" is off.
+  document.addEventListener('fullscreenchange', () => render());
+  document.addEventListener('webkitfullscreenchange', () => render());
 
   /* ============================================================ settings */
   let lastTarget = null, lastXY = null;
