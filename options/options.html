@@ -177,8 +177,11 @@
       <header class="phead"><h1>Cache</h1><p id="cacheSummary">Loading…</p></header>
       <div class="grp tight">
         <div class="row">
-          <div class="lab"><label>Clear cache and translated subtitles</label><small>Removes every saved translation and any unfinished job from this browser. Settings and API keys stay.</small></div>
-          <div class="ctl end"><button class="btn danger" id="clearAll" data-icon="trash"> Clear cache</button></div>
+          <div class="lab"><label>Download or clear saved translations</label><small>Download all saves every translated subtitle as an .srt file inside one .zip. Clear cache removes every saved translation and any unfinished job from this browser; settings and API keys stay.</small></div>
+          <div class="ctl end">
+            <button class="btn" id="downloadAll" data-icon="download"> Download all (.zip)</button>
+            <button class="btn danger" id="clearAll" data-icon="trash"> Clear cache</button>
+          </div>
         </div>
       </div>
       <ul class="jobs" id="jobs"></ul>
@@ -187,6 +190,8 @@
 </div>
 <script src="../lib/shared.js"></script>
 <script src="../lib/icons.js"></script>
+<script src="../lib/captions.js"></script>
+<script src="../lib/zip.js"></script>
 <script src="options.js"></script>
 </body>
 </html>

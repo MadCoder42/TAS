@@ -343,14 +343,66 @@
     try { const u = new URL(j.pageUrl); return u.protocol === 'https:' || u.protocol === 'http:' ? u.href : ''; } catch (e) { return ''; }
   };
   const kb = (n) => (n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');
+  let cached = [];
+  let flashT = 0;
+  /** Short message in the sidebar status line, then back to the normal text. */
+  function flash(msg) {
+    savedText.textContent = msg;
+    clearTimeout(flashT);
+    flashT = setTimeout(() => { savedText.textContent = 'All changes saved'; }, 3200);
+  }
+  function saveBlob(blob, name) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  }
+  /** The translated subtitle of one saved job as { name, text }, built the same way as the popup's download:
+   *  UTF-8 with a BOM, lines the model has not translated keep their original text, and right-to-left languages get
+   *  the embedding marks so players keep mixed English/number text in order. Null when the job cannot be read. */
+  async function subtitleFile(j) {
+    const r = await GST.rpc({ type: 'bg:job:get', key: j.key, full: true });
+    if (!r || !r.ok || r.none || !Array.isArray(r.cues)) return null;
+    const rtl = !!(r.summary && r.summary.target && r.summary.target.rtl);
+    const srt = GST.buildSrt(r.cues, r.tr, { mode: 'translated', bidi: rtl ? 'embed' : 'none' });
+    return { name: GST.srtFileName(j.title, j.target && j.target.code, false), text: '\uFEFF' + srt };
+  }
+  $('#downloadAll').addEventListener('click', async (e) => {
+    const b = e.currentTarget, label = b.lastChild;
+    const todo = cached.filter((j) => j.done);
+    if (!todo.length) return;
+    b.disabled = true; label.textContent = ' Preparing…';
+    try {
+      const entries = [], used = new Map();
+      let failed = 0;
+      for (const j of todo) {
+        const f = await subtitleFile(j);
+        if (!f) { failed++; continue; }
+        // Two videos can share a title and language: keep every file by numbering the later ones.
+        const n = (used.get(f.name) || 0) + 1; used.set(f.name, n);
+        entries.push({ name: n > 1 ? f.name.replace(/(\.[\w-]+\.srt)$/, ` (${n})$1`) : f.name, data: f.text });
+      }
+      if (!entries.length) { flash('Could not read the saved translations'); return; }
+      const d = new Date(), p2 = (x) => String(x).padStart(2, '0');
+      saveBlob(await GST.zip(entries), `TAS-subtitles-${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}.zip`);
+      flash(`${entries.length} ${entries.length === 1 ? 'subtitle' : 'subtitles'} saved${failed ? `, ${failed} could not be read` : ''}`);
+    } catch (err) {
+      flash('Could not build the zip file');
+    } finally {
+      label.textContent = ' Download all (.zip)'; b.disabled = !cached.some((j) => j.done);
+    }
+  });
   async function loadCache() {
     const r = await GST.rpc({ type: 'bg:jobs:list' });
     const jobs = (r && r.jobs) || [];
+    cached = jobs;
     const ul = $('#jobs');
     ul.innerHTML = '';
     const total = jobs.reduce((n, j) => n + j.size, 0);
     $('#cacheSummary').textContent = jobs.length ? `${jobs.length} saved ${jobs.length === 1 ? 'translation' : 'translations'}, about ${kb(total)}.` : 'Nothing saved yet.';
     $('#clearAll').disabled = !jobs.length;
+    $('#downloadAll').disabled = !jobs.some((j) => j.done);
     if (!jobs.length) { ul.innerHTML = '<li class="nojobs">Translations you start appear here, so you can reopen them on the same video later.</li>'; return; }
     const label = { done: 'Translated', running: 'Translating', paused: 'Paused', partial: 'Has failed blocks', idle: 'Not started' };
     for (const j of jobs) {
@@ -360,7 +412,10 @@
       li.innerHTML = `<div><div class="t"></div><small></small></div>
         <div><div class="bar"><i style="width:${pct}%"></i></div><small>${pct}% of ${j.total.toLocaleString()} lines</small></div>
         <span class="chip ${j.status === 'done' ? 'ok' : j.status === 'partial' ? 'bad' : ''}">${label[j.status] || j.status}</span>
-        <button class="btn icon sm danger" title="Delete" aria-label="Delete this translation">${GST.icon('trash')}</button>`;
+        <div class="acts">
+          <button class="btn icon sm dl" title="Download .srt" aria-label="Download this subtitle as .srt">${GST.icon('download')}</button>
+          <button class="btn icon sm danger del" title="Delete" aria-label="Delete this translation">${GST.icon('trash')}</button>
+        </div>`;
       const tEl = li.querySelector('.t');
       const url = jobUrl(j);
       if (url) {
@@ -370,7 +425,17 @@
         tEl.appendChild(a);
       } else tEl.textContent = j.title || j.videoKey;
       li.querySelector('small').textContent = `${j.target.name}, ${kb(j.size)}, ${rel(j.updatedAt)}`;
-      li.querySelector('button').onclick = async () => { await GST.rpc({ type: 'bg:job:cancel', key: j.key }); loadCache(); };
+      li.querySelector('.del').onclick = async () => { await GST.rpc({ type: 'bg:job:cancel', key: j.key }); loadCache(); };
+      const dl = li.querySelector('.dl');
+      if (!j.done) { dl.disabled = true; dl.title = 'Nothing translated yet'; }
+      dl.onclick = async () => {
+        dl.disabled = true;
+        try {
+          const f = await subtitleFile(j);
+          if (f) { saveBlob(new Blob([f.text], { type: 'application/x-subrip;charset=utf-8' }), f.name); flash('Subtitle file saved'); }
+          else flash('Could not read this translation');
+        } finally { dl.disabled = false; }
+      };
       ul.appendChild(li);
     }
   }

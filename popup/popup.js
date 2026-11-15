@@ -449,11 +449,9 @@
     if (!S.job || !S.cues) return;
     const mode = $('#dlMode').value;
     const srt = GST.buildSrt(S.cues, S.tr, { mode, bidi: rtl() && mode !== 'original' ? $('#bidi').value : 'none' });
-    const base = (S.job.title || 'subtitles').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || 'subtitles';
-    const code = String(S.job.target.code).replace(/^custom:/, '').replace(/[^\w-]+/g, '') || 'tr';
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob(['\uFEFF' + srt], { type: 'application/x-subrip;charset=utf-8' }));
-    a.download = `${base}.${mode === 'original' ? 'orig' : code}.srt`;
+    a.download = GST.srtFileName(S.job.title, S.job.target.code, mode === 'original');
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 4000);
     const missing = S.tr.filter((x) => !x).length;
