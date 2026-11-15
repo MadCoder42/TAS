@@ -72,8 +72,13 @@
             </select>
             <button class="btn hi sm" id="btnDownload" data-icon="download"> Download .srt</button>
           </div>
-          <label class="rlm" id="rlmWrap" hidden title="Adds an invisible right-to-left mark to every line so players keep punctuation on the correct side">
-            <input type="checkbox" id="rlm" checked> RTL marks in the file
+          <label class="rlm" id="rlmWrap" hidden title="Invisible characters added to every line so players show right-to-left text in the right order, even with English words or numbers in it. Use RLM only or None if your player draws them as boxes.">
+            RTL marks in the file
+            <select id="bidi" aria-label="RTL marks in the file">
+              <option value="embed">Embedding (works in most players)</option>
+              <option value="rlm">RLM only</option>
+              <option value="none">None</option>
+            </select>
           </label>
         </div>
         <div id="blockList" class="blist"></div>

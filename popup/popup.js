@@ -448,7 +448,7 @@
   $('#btnDownload').addEventListener('click', () => {
     if (!S.job || !S.cues) return;
     const mode = $('#dlMode').value;
-    const srt = GST.buildSrt(S.cues, S.tr, { mode, rlm: rtl() && $('#rlm').checked && mode !== 'original' });
+    const srt = GST.buildSrt(S.cues, S.tr, { mode, bidi: rtl() && mode !== 'original' ? $('#bidi').value : 'none' });
     const base = (S.job.title || 'subtitles').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || 'subtitles';
     const code = String(S.job.target.code).replace(/^custom:/, '').replace(/[^\w-]+/g, '') || 'tr';
     const a = document.createElement('a');
