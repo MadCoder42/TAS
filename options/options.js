@@ -358,18 +358,80 @@
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   }
-  /** The translated subtitle of one saved job as { name, text }, built the same way as the popup's download:
-   *  UTF-8 with a BOM, lines the model has not translated keep their original text, and right-to-left languages get
-   *  the embedding marks so players keep mixed English/number text in order. Null when the job cannot be read. */
-  async function subtitleFile(j) {
+  /** One saved job as a subtitle file { title, suffix, name, text } in the given mode: 'translated', 'original' or
+   *  'bilingual'. Built the same way as the popup's download: UTF-8 with a BOM, lines the model has not translated keep
+   *  their original text, and right-to-left translations get the embedding marks so players keep mixed English/number
+   *  text in order (the original needs none). Null when the job cannot be read.
+   *  The name is title + suffix, kept apart so a zip can number duplicate titles:
+   *    translated  Title.fa.srt     bilingual  Title.fa.bilingual.srt     original  Title.srt */
+  async function subtitleFile(j, mode = 'translated') {
     const r = await GST.rpc({ type: 'bg:job:get', key: j.key, full: true });
     if (!r || !r.ok || r.none || !Array.isArray(r.cues)) return null;
     const rtl = !!(r.summary && r.summary.target && r.summary.target.rtl);
-    const srt = GST.buildSrt(r.cues, r.tr, { mode: 'translated', bidi: rtl ? 'embed' : 'none' });
-    return { name: GST.srtFileName(j.title, j.target && j.target.code, false), text: '\uFEFF' + srt };
+    const srt = GST.buildSrt(r.cues, r.tr, { mode, bidi: rtl && mode !== 'original' ? 'embed' : 'none' });
+    const full = GST.srtFileName(j.title, j.target && j.target.code, false);   // "Title.fa.srt"
+    const stem = full.slice(0, -'.srt'.length);                                 // "Title.fa"
+    const title = stem.replace(/\.[^.]*$/, '');                                 // "Title"
+    const suffix = mode === 'original' ? '.srt' : mode === 'bilingual' ? full.slice(title.length, -'.srt'.length) + '.bilingual.srt' : full.slice(title.length);
+    return { title, suffix, name: title + suffix, text: '\uFEFF' + srt };
   }
-  $('#downloadAll').addEventListener('click', async (e) => {
-    const b = e.currentTarget, label = b.lastChild;
+
+  /* ---- download menu: one floating menu shared by "Download all" and every row's download button */
+  const MODES = {
+    translated: { label: 'Translated', hint: 'Translation only' },
+    original: { label: 'Original', hint: 'Source language only' },
+    bilingual: { label: 'Bilingual', hint: 'Translation, with the original below it' },
+  };
+  const menu = document.createElement('div');
+  menu.className = 'menu'; menu.setAttribute('role', 'menu'); menu.hidden = true;
+  document.body.appendChild(menu);
+  let menuOwner = null;
+  function closeMenu(refocus) {
+    if (menu.hidden) return;
+    menu.hidden = true; menu.textContent = '';
+    if (menuOwner) { menuOwner.setAttribute('aria-expanded', 'false'); if (refocus) menuOwner.focus(); }
+    menuOwner = null;
+  }
+  /** Open the menu under `anchor`. `modes` is a list of keys of MODES; `pick(mode)` runs when one is chosen. */
+  function openMenu(anchor, modes, pick) {
+    if (menuOwner === anchor) { closeMenu(true); return; }
+    closeMenu(false);
+    for (const m of modes) {
+      const it = document.createElement('button');
+      it.type = 'button'; it.className = 'mi'; it.setAttribute('role', 'menuitem');
+      const b = document.createElement('b'); b.textContent = MODES[m].label;
+      const sm = document.createElement('small'); sm.textContent = MODES[m].hint;
+      it.append(b, sm);
+      it.onclick = () => { closeMenu(true); pick(m); };
+      menu.appendChild(it);
+    }
+    menu.hidden = false; menuOwner = anchor; anchor.setAttribute('aria-expanded', 'true');
+    const r = anchor.getBoundingClientRect(), w = menu.offsetWidth, h = menu.offsetHeight;
+    const left = Math.max(8, Math.min(r.right - w, innerWidth - w - 8));
+    const top = r.bottom + 6 + h > innerHeight - 8 ? Math.max(8, r.top - h - 6) : r.bottom + 6;   // flip up when there is no room
+    menu.style.left = left + 'px'; menu.style.top = top + 'px';
+    menu.firstElementChild.focus({ preventScroll: true });
+  }
+  menu.addEventListener('keydown', (e) => {
+    const items = Array.from(menu.children), i = items.indexOf(document.activeElement);
+    const go = (n) => { e.preventDefault(); items[(n + items.length) % items.length].focus(); };
+    if (e.key === 'ArrowDown') go(i + 1);
+    else if (e.key === 'ArrowUp') go(i - 1);
+    else if (e.key === 'Home') go(0);
+    else if (e.key === 'End') go(items.length - 1);
+    else if (e.key === 'Escape') { e.preventDefault(); closeMenu(true); }
+    else if (e.key === 'Tab') closeMenu(false);
+  });
+  document.addEventListener('pointerdown', (e) => { if (menuOwner && !menu.contains(e.target) && !menuOwner.contains(e.target)) closeMenu(false); }, true);
+  addEventListener('resize', () => closeMenu(false));
+  addEventListener('scroll', () => closeMenu(false), true);
+  addEventListener('blur', () => closeMenu(false));
+  /** Let ArrowDown open an anchor's menu, like a native select. */
+  const keyOpens = (el) => el.addEventListener('keydown', (e) => { if (e.key === 'ArrowDown' && !el.disabled) { e.preventDefault(); if (menuOwner !== el) el.click(); } });
+
+  /* ---- download all */
+  async function downloadAll(mode) {
+    const b = $('#downloadAll'), label = b.lastChild;
     const todo = cached.filter((j) => j.done);
     if (!todo.length) return;
     b.disabled = true; label.textContent = ' Preparing…';
@@ -377,26 +439,30 @@
       const entries = [], used = new Map();
       let failed = 0;
       for (const j of todo) {
-        const f = await subtitleFile(j);
+        const f = await subtitleFile(j, mode);
         if (!f) { failed++; continue; }
         // Two videos can share a title and language: keep every file by numbering the later ones.
         const n = (used.get(f.name) || 0) + 1; used.set(f.name, n);
-        entries.push({ name: n > 1 ? f.name.replace(/(\.[\w-]+\.srt)$/, ` (${n})$1`) : f.name, data: f.text });
+        entries.push({ name: n > 1 ? `${f.title} (${n})${f.suffix}` : f.name, data: f.text });
       }
       if (!entries.length) { flash('Could not read the saved translations'); return; }
       const d = new Date(), p2 = (x) => String(x).padStart(2, '0');
-      saveBlob(await GST.zip(entries), `TAS-subtitles-${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}.zip`);
+      const tag = mode === 'translated' ? '' : `${mode}-`;
+      saveBlob(await GST.zip(entries), `TAS-subtitles-${tag}${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}.zip`);
       flash(`${entries.length} ${entries.length === 1 ? 'subtitle' : 'subtitles'} saved${failed ? `, ${failed} could not be read` : ''}`);
     } catch (err) {
       flash('Could not build the zip file');
     } finally {
       label.textContent = ' Download all (.zip)'; b.disabled = !cached.some((j) => j.done);
     }
-  });
+  }
+  $('#downloadAll').addEventListener('click', (e) => openMenu(e.currentTarget, ['translated', 'original', 'bilingual'], downloadAll));
+  keyOpens($('#downloadAll'));
   async function loadCache() {
     const r = await GST.rpc({ type: 'bg:jobs:list' });
     const jobs = (r && r.jobs) || [];
     cached = jobs;
+    closeMenu(false);
     const ul = $('#jobs');
     ul.innerHTML = '';
     const total = jobs.reduce((n, j) => n + j.size, 0);
@@ -413,7 +479,7 @@
         <div><div class="bar"><i style="width:${pct}%"></i></div><small>${pct}% of ${j.total.toLocaleString()} lines</small></div>
         <span class="chip ${j.status === 'done' ? 'ok' : j.status === 'partial' ? 'bad' : ''}">${label[j.status] || j.status}</span>
         <div class="acts">
-          <button class="btn icon sm dl" title="Download .srt" aria-label="Download this subtitle as .srt">${GST.icon('download')}</button>
+          <button class="btn icon sm dl" title="Download .srt…" aria-label="Download this subtitle" aria-haspopup="menu" aria-expanded="false">${GST.icon('download')}</button>
           <button class="btn icon sm danger del" title="Delete" aria-label="Delete this translation">${GST.icon('trash')}</button>
         </div>`;
       const tEl = li.querySelector('.t');
@@ -428,14 +494,16 @@
       li.querySelector('.del').onclick = async () => { await GST.rpc({ type: 'bg:job:cancel', key: j.key }); loadCache(); };
       const dl = li.querySelector('.dl');
       if (!j.done) { dl.disabled = true; dl.title = 'Nothing translated yet'; }
-      dl.onclick = async () => {
+      const saveOne = async (mode) => {
         dl.disabled = true;
         try {
-          const f = await subtitleFile(j);
+          const f = await subtitleFile(j, mode);
           if (f) { saveBlob(new Blob([f.text], { type: 'application/x-subrip;charset=utf-8' }), f.name); flash('Subtitle file saved'); }
           else flash('Could not read this translation');
-        } finally { dl.disabled = false; }
+        } finally { dl.disabled = !j.done; }
       };
+      dl.onclick = () => openMenu(dl, ['translated', 'original', 'bilingual'], saveOne);
+      keyOpens(dl);
       ul.appendChild(li);
     }
   }

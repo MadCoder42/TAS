@@ -122,6 +122,15 @@ a { color: var(--accent); }
 .bar i { display: block; height: 100%; background: var(--hi); border-radius: inherit; }
 .nojobs { padding: 30px 0; color: var(--muted); }
 
+/* ---------- download menu (shared by "Download all" and each row's download button) */
+.job .dl[aria-expanded=true], #downloadAll[aria-expanded=true] { background: color-mix(in srgb, var(--surface-2) 82%, var(--fg)); }
+.menu { position: fixed; z-index: 50; min-width: 230px; padding: 5px; border-radius: 12px; background: var(--surface); box-shadow: 0 0 0 1.5px var(--hair), 0 10px 28px rgba(20, 26, 69, .28); }
+.menu[hidden] { display: none; }
+.menu .mi { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; width: 100%; padding: .5em .75em; border: 0; border-radius: 8px; background: none; text-align: start; cursor: pointer; }
+.menu .mi:hover, .menu .mi:focus-visible { background: var(--surface-2); outline: none; }
+.menu .mi b { font-weight: 650; }
+.menu .mi small { color: var(--muted); font-size: 12px; }
+
 @media (min-width: 901px) and (max-width: 1100px) { main { padding-inline: 24px; } }
 
 @media (max-width: 900px) {
