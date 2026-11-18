@@ -318,6 +318,7 @@
 
   /* ================================================================ block manager */
   const blockState = (b) => (S.job ? S.job.blocks[b] : 'p');
+  const setBlockState = (b, s) => { if (S.job) S.job.blocks = S.job.blocks.slice(0, b) + s + S.job.blocks.slice(b + 1); };
   function fmtRange(b) {
     const [f, t] = blockRange(b);
     return `${GST.fmtClock(S.cues[f][0])} to ${GST.fmtClock(S.cues[t - 1][1])}, lines ${f + 1} to ${t}`;
@@ -328,56 +329,124 @@
     if (S.filter === 'p') return s === 'p' || s === 'r';
     return s === S.filter;
   }
+  // Identifies the job layout a block element was built for; a different layout means the element is stale.
+  const layoutSig = () => (S.job ? `${S.job.key}|${S.job.blockSize}|${S.job.total}|${S.job.srcHash}` : '');
+
+  /* Anything that resizes textareas or swaps blocks can momentarily make the page shorter, and the browser then
+   * clamps scrollTop and never gives it back. Run such work through keepScroll so the position survives. */
+  function keepScroll(fn) {
+    const sc = document.scrollingElement || document.documentElement;
+    const top = sc.scrollTop, btop = document.body.scrollTop;
+    try { fn(); } finally {
+      if (sc.scrollTop !== top) sc.scrollTop = top;
+      if (document.body.scrollTop !== btop) document.body.scrollTop = btop;
+    }
+  }
+  // Size textareas to their text. Batched (write, read, write) so many of them cost one reflow, not one each.
+  function growMany(tas) {
+    if (!tas.length) return;
+    keepScroll(() => {
+      for (const t of tas) t.style.height = 'auto';
+      const hs = tas.map((t) => t.scrollHeight);
+      tas.forEach((t, k) => { t.style.height = hs[k] + 2 + 'px'; });
+    });
+  }
+
+  /* Edits are debounced, but never dropped: they are also flushed when the textarea loses focus,
+   * when the filter changes and when the popup closes. */
+  const flushers = new Set();
+  const flushEdits = () => { for (const f of Array.from(flushers)) f(); };
+  window.addEventListener('pagehide', flushEdits);
+
   function buildBlock(b) {
     const s = blockState(b);
     const el = document.createElement('div');
     el.className = 'blk' + (S.open.has(b) ? ' open' : '');
-    el.dataset.b = b; el.dataset.s = s;
-    const translated = s === 'd';
+    el.dataset.b = b; el.dataset.s = s; el.dataset.sig = layoutSig();
     el.innerHTML = `
       <div class="bh" role="button" tabindex="0" aria-expanded="${S.open.has(b)}">
         <span class="mark"></span>
         <div class="bt"><b>Block ${b + 1}</b><small class="num">${fmtRange(b)}</small></div>
         <button class="btn icon sm jump" title="Jump to this point in the video" aria-label="Jump to this point in the video">${GST.icon('jump')}</button>
-        <button class="btn icon sm tr" title="${translated ? 'Retranslate this block' : 'Translate this block'}" aria-label="${translated ? 'Retranslate this block' : 'Translate this block'}">${GST.icon('redo')}</button>
+        <button class="btn icon sm tr">${GST.icon('redo')}</button>
         ${GST.icon('chevron', 'chev')}
       </div>
       <div class="bl"></div>`;
-    if (S.open.has(b)) fillLines(el, b);
-    return el;
+    labelTr(el, s);
+    return el; // lines are filled once the element is in the page (see renderBlocks), so they can be measured
   }
+  function labelTr(el, s) {
+    const label = s === 'd' ? 'Retranslate this block' : 'Translate this block';
+    const tr = el.querySelector('.tr');
+    if (tr.title !== label) { tr.title = label; tr.setAttribute('aria-label', label); }
+  }
+  /* Update an existing block in place. Nothing is removed from the page, so focus, caret, selection,
+   * scroll position and half-typed text all survive. */
+  function patchBlock(el, b) {
+    const s = blockState(b);
+    if (el.dataset.s !== s) { el.dataset.s = s; labelTr(el, s); }
+    if (S.open.has(b)) fillLines(el, b);
+  }
+  function syncError(el, b) {
+    const bl = el.querySelector('.bl');
+    const err = S.job.errs && S.job.errs[b];
+    let d = bl.querySelector(':scope > .berr');
+    if (err && blockState(b) === 'e') {
+      if (!d) { d = document.createElement('div'); d.className = 'berr'; bl.prepend(d); }
+      if (d.textContent !== err) d.textContent = err;
+    } else if (d) d.remove();
+  }
+  function buildRow(i, dir) {
+    const row = document.createElement('div');
+    row.className = 'ln';
+    const tb = document.createElement('button');
+    tb.className = 't num'; tb.textContent = GST.fmtClock(S.cues[i][0]); tb.title = 'Jump to this line';
+    tb.onclick = () => sendTab('gst:seek', { ms: S.cues[i][0] });
+    const o = document.createElement('div'); o.className = 'o'; o.dir = 'auto'; o.textContent = S.cues[i][2];
+    const ta = document.createElement('textarea');
+    ta.rows = 1; ta.dir = dir; ta.value = S.tr[i] || ''; ta.placeholder = 'Not translated yet';
+    ta.dataset.i = i;
+    let timer = 0;
+    const save = async () => {
+      clearTimeout(timer); timer = 0;
+      if (!ta.dataset.dirty) return;
+      delete ta.dataset.dirty; flushers.delete(save);
+      const text = ta.value;
+      S.tr[i] = text;
+      await GST.rpc({ type: 'bg:job:edit', key: S.jobKey, idx: i, text });
+      toast('Saved', 900); paintStrip();
+    };
+    ta.addEventListener('input', () => {
+      ta.dataset.dirty = '1'; flushers.add(save);
+      S.tr[i] = ta.value;                 // the download always sees the latest text, even before the save fires
+      growMany([ta]);
+      clearTimeout(timer); timer = setTimeout(save, 700);
+    });
+    ta.addEventListener('blur', save);
+    row.append(tb, o, ta);
+    return row;
+  }
+  /* Create the line editors the first time a block is opened, afterwards only refresh what changed. */
   function fillLines(el, b) {
     const bl = el.querySelector('.bl');
-    bl.innerHTML = '';
-    const err = S.job.errs && S.job.errs[b];
-    if (err && blockState(b) === 'e') { const d = document.createElement('div'); d.className = 'berr'; d.textContent = err; bl.appendChild(d); }
-    const [f, t] = blockRange(b);
-    const dir = rtl() ? 'rtl' : 'ltr';
-    for (let i = f; i < t; i++) {
-      const row = document.createElement('div');
-      row.className = 'ln';
-      const tb = document.createElement('button');
-      tb.className = 't num'; tb.textContent = GST.fmtClock(S.cues[i][0]); tb.title = 'Jump to this line';
-      tb.onclick = () => sendTab('gst:seek', { ms: S.cues[i][0] });
-      const o = document.createElement('div'); o.className = 'o'; o.dir = 'auto'; o.textContent = S.cues[i][2];
-      const ta = document.createElement('textarea');
-      ta.rows = 1; ta.dir = dir; ta.value = S.tr[i] || ''; ta.placeholder = 'Not translated yet';
-      ta.dataset.i = i;
-      const grow = () => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 2 + 'px'; };
-      let timer = 0;
-      ta.addEventListener('input', () => {
-        grow();
-        clearTimeout(timer);
-        timer = setTimeout(async () => {
-          S.tr[i] = ta.value;
-          await GST.rpc({ type: 'bg:job:edit', key: S.jobKey, idx: i, text: ta.value });
-          toast('Saved', 900); paintStrip();
-        }, 500);
-      });
-      row.append(tb, o, ta);
-      bl.appendChild(row);
-      requestAnimationFrame(grow);
+    syncError(el, b);
+    if (!bl.dataset.filled) {
+      bl.dataset.filled = '1';
+      const [f, t] = blockRange(b);
+      const dir = rtl() ? 'rtl' : 'ltr';
+      for (let i = f; i < t; i++) bl.appendChild(buildRow(i, dir));
+      growMany(Array.from(bl.querySelectorAll('textarea')));
+      return;
     }
+    const stale = [];
+    for (const ta of bl.querySelectorAll('textarea')) {
+      if (ta.dataset.dirty) continue;     // the person is typing here: their text wins
+      const v = S.tr[+ta.dataset.i] || '';
+      if (ta.value !== v) { ta.value = v; stale.push(ta); }
+    }
+    // Also (re)size boxes that were filled while the block was collapsed or that just changed.
+    for (const ta of bl.querySelectorAll('textarea')) if (!ta.style.height || ta.style.height === '2px') stale.push(ta);
+    growMany(stale);
   }
   function renderBlocks() {
     const list = $('#blockList');
@@ -399,19 +468,30 @@
     }
     empty.hidden = true;
     $('#btnDownload').disabled = false;
-    // Rebuild only what changed so open editors keep focus while blocks stream in.
-    const n = nBlocks();
-    const existing = new Map(Array.from(list.children).map((c) => [+c.dataset.b, c]));
-    const frag = [];
-    for (let b = 0; b < n; b++) {
-      const cur = existing.get(b);
-      if (!visible(b)) { if (cur) cur.remove(); continue; }
-      const state = blockState(b);
-      if (cur && cur.dataset.s === state && !cur.dataset.dirty) { frag.push(cur); continue; }
-      if (cur && cur.contains(document.activeElement) && cur.classList.contains('open')) { cur.dataset.s = state; frag.push(cur); continue; }
-      frag.push(buildBlock(b));
-    }
-    list.replaceChildren(...frag);
+    keepScroll(() => {
+      // Reconcile the list with the blocks that should be shown. Existing elements are patched where they are and
+      // only missing ones are inserted; nothing that stays visible is ever detached (detaching drops focus).
+      const n = nBlocks();
+      const sig = layoutSig();
+      const existing = new Map();
+      for (const c of Array.from(list.children)) {
+        const b = +c.dataset.b;
+        if (b >= n || !visible(b) || c.dataset.sig !== sig) c.remove(); else existing.set(b, c);
+      }
+      let ref = list.firstElementChild;
+      for (let b = 0; b < n; b++) {
+        if (!visible(b)) continue;
+        let el = existing.get(b);
+        if (!el) {
+          el = buildBlock(b);
+          list.insertBefore(el, ref);
+          if (S.open.has(b)) fillLines(el, b);
+        } else {
+          patchBlock(el, b);
+          if (el === ref) ref = ref.nextElementSibling; else list.insertBefore(el, ref);
+        }
+      }
+    });
   }
   $('#blockList').addEventListener('click', async (e) => {
     const el = e.target.closest('.blk');
@@ -419,16 +499,17 @@
     const b = +el.dataset.b;
     if (e.target.closest('.jump')) { sendTab('gst:seek', { ms: S.cues[blockRange(b)[0]][0] }); return; }
     if (e.target.closest('.tr')) {
-      el.dataset.s = 'r'; if (S.job) S.job.blocks = S.job.blocks.slice(0, b) + 'r' + S.job.blocks.slice(b + 1);
-      paintStrip();
+      if (!S.job || blockState(b) === 'r') return;          // already running
+      const prev = blockState(b);
+      setBlockState(b, 'r');
+      render();                                             // spinner, in place
       const r = await GST.rpc({ type: 'bg:job:block', key: S.jobKey, block: b });
       if (r && r.ok === false) {
         if (r.error === 'no-keys') { toast('Add a Gemini API key first.'); ext.runtime.openOptionsPage(); }
         else toast(r.error || 'Translation failed.', 4500);
       }
       if (r && r.summary) S.job = r.summary;
-      const cur = $(`.blk[data-b="${b}"]`);
-      if (cur) cur.replaceWith(buildBlock(b));
+      else if (S.job && blockState(b) === 'r') setBlockState(b, prev);   // the request never started: undo the spinner
       render();
       return;
     }
@@ -442,7 +523,7 @@
   $('#blockList').addEventListener('keydown', (e) => {
     if ((e.key === 'Enter' || e.key === ' ') && e.target.classList.contains('bh')) { e.preventDefault(); e.target.click(); }
   });
-  $('#filter').addEventListener('change', (e) => { S.filter = e.target.value; $('#blockList').innerHTML = ''; renderBlocks(); });
+  $('#filter').addEventListener('change', (e) => { flushEdits(); S.filter = e.target.value; renderBlocks(); });
 
   /* ---- download */
   $('#btnDownload').addEventListener('click', () => {
@@ -472,15 +553,16 @@
     if (m.type === 'job:status') { S.job = m.summary; if (S.job && !S.cues) loadJob(); else { render(); } }
     else if (m.type === 'job:block' || m.type === 'job:lines') {
       if (!S.tr) { loadJob(); return; }
+      const grow = [];
       for (const [i, t] of m.lines) {
-        S.tr[i] = t;
         const ta = $(`textarea[data-i="${i}"]`);
-        if (ta && document.activeElement !== ta) { ta.value = t || ''; ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 2 + 'px'; }
+        if (ta && ta.dataset.dirty) continue;   // unsaved text in this box is newer than anything the background has
+        S.tr[i] = t;
+        if (ta && ta.value !== (t || '')) { ta.value = t || ''; grow.push(ta); }
       }
+      growMany(grow);
       if (m.summary) S.job = m.summary;
-      if (m.type === 'job:block') { const cur = $(`.blk[data-b="${m.block}"]`); if (cur && !cur.contains(document.activeElement)) { cur.dataset.dirty = '1'; } }
       render();
-      document.querySelectorAll('.blk[data-dirty]').forEach((x) => delete x.dataset.dirty);
     } else if (m.type === 'job:deleted') { S.job = null; S.cues = null; S.tr = null; S.strip = null; render(); }
   }
 
